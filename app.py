@@ -14,6 +14,7 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 LETTERS_DIR = BASE_DIR / "letters"
 JOB_DESCRIPTIONS_DIR = BASE_DIR / "job_descriptions"
+TEMPLATE_PATH = BASE_DIR / "cover_letter_template.docx"
 LOG_FILE = BASE_DIR / "run.log"
 META_FILE = BASE_DIR / "job_meta.json"
 RUN_STATE_FILE = BASE_DIR / "run_state.json"
@@ -148,6 +149,63 @@ def fetch_job(refnr):
     response = client.table(SUPABASE_TABLE).select("*").eq("refnr", str(refnr)).limit(1).execute()
     rows = response.data or []
     return rows[0] if rows else None
+
+
+def german_date_string():
+    months = [
+        "Januar",
+        "Februar",
+        "Maerz",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+    ]
+    today = datetime.now()
+    return f"{today.day}. {months[today.month - 1]} {today.year}"
+
+
+def fill_cover_letter_template(document, row):
+    subject = f"Bewerbung als {row.get('title') or 'Stelle'}"
+    body_text = (row.get("cover_letter_text") or "").strip()
+    body_parts = [part.strip() for part in body_text.split("\n\n") if part.strip()] or [body_text]
+
+    employer = row.get("employer") or ""
+    city = row.get("city") or ""
+
+    replacements = {
+        "{{DATE}}": german_date_string(),
+        "{{SUBJECT}}": subject,
+        "{{EMPLOYER}}": employer,
+        "{{STREET, HOUSE NUMBER}}": "",
+        "{{POSTAL NUMBER, CITY}}": city,
+    }
+
+    for paragraph in document.paragraphs:
+        text = (paragraph.text or "").strip()
+        if text in replacements:
+            paragraph.text = replacements[text]
+        elif text == "{{BODY}}":
+            paragraph.text = body_parts[0] if body_parts else ""
+            current_paragraph = paragraph
+            for extra in body_parts[1:]:
+                new_paragraph = current_paragraph.insert_paragraph_before("")
+                current_paragraph._p.addnext(new_paragraph._p)
+                new_paragraph.text = extra
+                current_paragraph = new_paragraph
+
+    for table in document.tables:
+        for row_cells in table.rows:
+            for cell in row_cells.cells:
+                for paragraph in cell.paragraphs:
+                    text = (paragraph.text or "").strip()
+                    if text in replacements:
+                        paragraph.text = replacements[text]
 
 
 @app.get("/")
@@ -622,15 +680,16 @@ def download_cover_letter(refnr):
     cover_letter_text = (row.get("cover_letter_text") or "").strip()
     if not cover_letter_text:
         return "Cover letter text not found", 404
+    if not TEMPLATE_PATH.exists():
+        return "Cover letter template not found", 500
 
     title = row.get("title") or "job"
     employer = row.get("employer") or "employer"
     file_name = f"{refnr}_{employer}_{title}.docx"
     safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in file_name)
 
-    document = Document()
-    for part in [p.strip() for p in cover_letter_text.split("\n\n") if p.strip()]:
-        document.add_paragraph(part)
+    document = Document(TEMPLATE_PATH)
+    fill_cover_letter_template(document, row)
 
     buffer = BytesIO()
     document.save(buffer)
