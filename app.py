@@ -120,6 +120,8 @@ def load_jobs():
                 "job_url": row.get("job_url") or "",
                 "cover_letter_path": cover_letter_path,
                 "job_description_path": job_description_path,
+                "cover_letter_text": row.get("cover_letter_text") or "",
+                "job_description_text": row.get("job_description_text") or "",
                 "has_cover_letter": bool(row.get("has_cover_letter")),
                 "application_status": row.get("application_status", "not_applied"),
                 "note": row.get("note", ""),
