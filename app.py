@@ -9,6 +9,8 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template_string, request, send_file, send_from_directory, url_for
 from supabase import create_client
 from docx import Document
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.shared import Pt, RGBColor
 
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,6 +21,11 @@ LOG_FILE = BASE_DIR / "run.log"
 META_FILE = BASE_DIR / "job_meta.json"
 RUN_STATE_FILE = BASE_DIR / "run_state.json"
 SUPABASE_TABLE = "jobs"
+LETTER_FONT_NAME = "Helvetica"
+LETTER_FONT_SIZE = 9
+LETTER_SPACE_AFTER_PT = 6
+LETTER_TEXT_COLOR = RGBColor(31, 55, 99)
+LETTER_LINE_SPACING = 1.5
 
 current_process = None
 
@@ -170,6 +177,61 @@ def german_date_string():
     return f"{today.day}. {months[today.month - 1]} {today.year}"
 
 
+def style_paragraph(paragraph, *, space_after_pt=LETTER_SPACE_AFTER_PT):
+    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.JUSTIFY
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(space_after_pt)
+    paragraph.paragraph_format.line_spacing = LETTER_LINE_SPACING
+    for run in paragraph.runs:
+        run.font.name = LETTER_FONT_NAME
+        run.font.size = Pt(LETTER_FONT_SIZE)
+        run.font.color.rgb = LETTER_TEXT_COLOR
+
+
+def style_table_paragraph(paragraph):
+    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = LETTER_LINE_SPACING
+    for run in paragraph.runs:
+        run.font.name = LETTER_FONT_NAME
+        run.font.size = Pt(LETTER_FONT_SIZE)
+        run.font.color.rgb = LETTER_TEXT_COLOR
+
+
+def replace_paragraph_text(paragraph, text, *, bold=None, space_after_pt=LETTER_SPACE_AFTER_PT):
+    paragraph.text = ""
+    run = paragraph.add_run(text)
+    if bold is not None:
+        run.bold = bold
+    style_paragraph(paragraph, space_after_pt=space_after_pt)
+
+
+def insert_paragraph_after(paragraph, text):
+    new_paragraph = paragraph.insert_paragraph_before("")
+    paragraph._p.addnext(new_paragraph._p)
+    new_paragraph.style = paragraph.style
+    if paragraph.alignment is not None:
+        new_paragraph.alignment = paragraph.alignment
+    new_paragraph.add_run(text)
+    style_paragraph(new_paragraph)
+    return new_paragraph
+
+
+def restyle_document(document):
+    for paragraph in document.paragraphs:
+        if paragraph.text.strip():
+            style_paragraph(paragraph)
+
+    for table in document.tables:
+        for row_cells in table.rows:
+            row_cells.height = None
+            row_cells.height_rule = None
+            for cell in row_cells.cells:
+                for paragraph in cell.paragraphs:
+                    style_table_paragraph(paragraph)
+
+
 def fill_cover_letter_template(document, row):
     subject = f"Bewerbung als {row.get('title') or 'Stelle'}"
     body_text = (row.get("cover_letter_text") or "").strip()
@@ -189,23 +251,31 @@ def fill_cover_letter_template(document, row):
     for paragraph in document.paragraphs:
         text = (paragraph.text or "").strip()
         if text in replacements:
-            paragraph.text = replacements[text]
+            replace_paragraph_text(
+                paragraph,
+                replacements[text],
+                bold=(text == "{{SUBJECT}}"),
+            )
         elif text == "{{BODY}}":
-            paragraph.text = body_parts[0] if body_parts else ""
+            replace_paragraph_text(paragraph, body_parts[0] if body_parts else "")
             current_paragraph = paragraph
             for extra in body_parts[1:]:
-                new_paragraph = current_paragraph.insert_paragraph_before("")
-                current_paragraph._p.addnext(new_paragraph._p)
-                new_paragraph.text = extra
-                current_paragraph = new_paragraph
+                current_paragraph = insert_paragraph_after(current_paragraph, extra)
 
     for table in document.tables:
         for row_cells in table.rows:
+            row_cells.height = None
+            row_cells.height_rule = None
             for cell in row_cells.cells:
                 for paragraph in cell.paragraphs:
                     text = (paragraph.text or "").strip()
                     if text in replacements:
-                        paragraph.text = replacements[text]
+                        replace_paragraph_text(paragraph, replacements[text], space_after_pt=0)
+                        style_table_paragraph(paragraph)
+                    else:
+                        style_table_paragraph(paragraph)
+
+    restyle_document(document)
 
 
 @app.get("/")
@@ -715,4 +785,3 @@ def download_file(folder, filename):
 
 if __name__ == "__main__":
     app.run(debug=True)
-
