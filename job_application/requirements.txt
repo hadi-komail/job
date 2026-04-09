@@ -1,0 +1,7 @@
+requests
+openai
+python-docx
+openpyxl
+httpx
+flask
+gunicorn

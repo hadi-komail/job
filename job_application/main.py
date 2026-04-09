@@ -1,0 +1,718 @@
+import base64
+import datetime as dt
+import os
+import time
+import subprocess
+import sys
+import urllib.parse
+from pathlib import Path
+
+
+def ensure_import(module_name, package_name=None):
+    try:
+        return __import__(module_name, fromlist=["*"])
+    except ModuleNotFoundError:
+        package_to_install = package_name or module_name
+        print(f"Installing missing package '{package_to_install}' for {sys.executable}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_to_install])
+        return __import__(module_name, fromlist=["*"])
+
+
+requests = ensure_import("requests")
+openai_module = ensure_import("openai")
+docx_module = ensure_import("docx", "python-docx")
+openpyxl_module = ensure_import("openpyxl")
+httpx_module = ensure_import("httpx")
+OpenAI = openai_module.OpenAI
+RateLimitError = openai_module.RateLimitError
+Document = docx_module.Document
+Workbook = openpyxl_module.Workbook
+load_workbook = openpyxl_module.load_workbook
+HTTPXClient = httpx_module.Client
+Pt = docx_module.shared.Pt
+RGBColor = docx_module.shared.RGBColor
+WD_PARAGRAPH_ALIGNMENT = docx_module.enum.text.WD_PARAGRAPH_ALIGNMENT
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+
+BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4"
+HEADERS = {"X-API-Key": "jobboerse-jobsuche"}
+REQUEST_TIMEOUT = 15
+REQUEST_RETRIES = 1
+REQUEST_RETRY_DELAY_SECONDS = 0
+SEARCH_PAGE_SIZE = 10
+SEARCH_MAX_PAGES = 1
+MIN_SCORE_TO_PRINT = 2
+MAX_COVER_LETTERS = 10
+MIN_AI_MATCH_SCORE = 7
+CV_PATH = Path("about-ai.txt")
+OUTPUT_DIR = Path("letters")
+JOB_DESCRIPTION_DIR = Path("job_descriptions")
+TEMPLATE_PATH = Path("cover_letter_template.docx")
+OPENAI_MODEL = "gpt-5.4-mini"
+AI_SCORED_JOBS_PATH = Path("ai_scored_jobs.xlsx")
+AI_WRITTEN_JOBS_PATH = Path("ai_cover_letters.xlsx")
+LETTER_FONT_NAME = "Helvetica"
+LETTER_FONT_SIZE = 9
+LETTER_SPACE_AFTER_PT = 6
+LETTER_TEXT_COLOR = RGBColor(31, 55, 99)
+LETTER_LINE_SPACING = 1.5
+
+
+def encode_refnr(refnr):
+    return base64.b64encode(refnr.encode("utf-8")).decode("utf-8")
+
+
+def build_job_page_url(refnr):
+    encoded_refnr = urllib.parse.quote(refnr, safe="")
+    return (
+        "https://www.arbeitsagentur.de/jobsuche/jobdetail/"
+        f"{encoded_refnr}"
+    )
+
+
+def get_json(url, *, params=None):
+    last_exc = None
+
+    for attempt in range(1, REQUEST_RETRIES + 1):
+        try:
+            res = requests.get(
+                url,
+                headers=HEADERS,
+                params=params,
+                timeout=REQUEST_TIMEOUT,
+            )
+            res.raise_for_status()
+            return res.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt == REQUEST_RETRIES:
+                break
+            if REQUEST_RETRY_DELAY_SECONDS > 0:
+                time.sleep(REQUEST_RETRY_DELAY_SECONDS * attempt)
+
+    raise last_exc
+
+
+def search_jobs(term):
+    jobs = []
+    page = 1
+    max_results = None
+
+    while page <= SEARCH_MAX_PAGES:
+        params = {
+            "was": term,
+            "size": SEARCH_PAGE_SIZE,
+            "page": page,
+        }
+        data = get_json(f"{BASE_URL}/jobs", params=params)
+        page_jobs = data.get("stellenangebote", [])
+        if not page_jobs:
+            break
+
+        jobs.extend(page_jobs)
+        max_results = data.get("maxErgebnisse")
+        if max_results is not None and len(jobs) >= int(max_results):
+            break
+        if len(page_jobs) < SEARCH_PAGE_SIZE:
+            break
+
+        page += 1
+
+    return jobs
+
+
+def get_job_details(refnr):
+    encoded = encode_refnr(refnr)
+    return get_json(f"{BASE_URL}/jobdetails/{encoded}")
+
+
+def score_job(job, description):
+    keywords = [
+        "Migration",
+        "Geflüchtete",
+        "integration",
+        "Farsi",
+        "Türkisch",
+        "Persisch",
+        "Sozialwissenschaftler",
+        "Flüchtlinge",
+        "Mehrsprachigkeit",
+        "migration und integration",
+        "sozialbetreuer",
+        "Soziologie",
+        "zuwanderer",
+        "Migrationsforschung",
+        "Integrationsforschung",
+        "Wissenschaftlicher Mitarbeiter Soziologie",
+        "Wissenschaftlicher Mitarbeiter Migration",
+        "Wissenschaftliche Hilfskraft Sozialforschung",
+        "Research Assistant Sozialwissenschaften",
+        "Qualitative Forschung Migration",
+        "Umfrageforschung Soziologie",
+        "Policy Research Migration",
+        "Data Analyst Sozialforschung",
+    ]
+
+    score = 0
+    text = (job.get("titel", "") + " " + (description or "")).lower()
+
+    for kw in keywords:
+        if kw.lower() in text:
+            score += 1
+
+    return score
+
+
+def load_cv_text():
+    return CV_PATH.read_text(encoding="utf-8")
+
+
+def get_openai_api_key():
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if api_key:
+        return api_key
+
+    if winreg is not None:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                saved_value, _ = winreg.QueryValueEx(key, "OPENAI_API_KEY")
+                if saved_value:
+                    os.environ["OPENAI_API_KEY"] = saved_value
+                    return saved_value
+        except OSError:
+            pass
+
+    env_file = Path(".env")
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("OPENAI_API_KEY="):
+                saved_value = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if saved_value:
+                    os.environ["OPENAI_API_KEY"] = saved_value
+                    return saved_value
+
+    return None
+
+
+def build_cover_letter_prompt(cv_text, job, description):
+    location = job.get("arbeitsort", {}) or {}
+    city = location.get("ort") or "Unknown city"
+    employer = job.get("arbeitgeber") or "Unknown employer"
+    title = job.get("titel") or "Unknown title"
+
+    return f"""
+Write a tailored professional cover letter in German for the following job application.
+
+Candidate CV:
+{cv_text}
+
+Job information:
+- Title: {title}
+- Employer: {employer}
+- City: {city}
+- Description:
+{description or "No description provided."}
+
+Requirements:
+- Use only facts supported by the CV.
+- Tailor the letter to the role and employer.
+- Emphasize relevant research, migration, sociology, multilingual, and fieldwork experience when appropriate.
+- Keep the tone professional and natural.
+- Keep the length around 300 to 450 words.
+- Do not invent degrees, publications, software skills, or achievements.
+- Write the letter with concrete details instead of generic claims.
+- Write it for a German professional setting.
+- Do not include a date line.
+- Do not include a subject line.
+""".strip()
+
+
+def build_match_assessment_prompt(cv_text, job, description):
+    location = job.get("arbeitsort", {}) or {}
+    city = location.get("ort") or "Unknown city"
+    employer = job.get("arbeitgeber") or "Unknown employer"
+    title = job.get("titel") or "Unknown title"
+
+    return f"""
+Assess how well this candidate matches the job.
+
+Candidate CV:
+{cv_text}
+
+Job information:
+- Title: {title}
+- Employer: {employer}
+- City: {city}
+- Description:
+{description or "No description provided."}
+
+Instructions:
+- Score the match from 0 to 10.
+- Base the score only on evidence in the CV and the job description.
+- Be strict and realistic.
+- If the job is in a very different field from the candidate profile, score it low.
+- Respond in exactly this format:
+MATCH_SCORE: <integer 0-10>
+REASON: <one short paragraph>
+""".strip()
+
+
+def parse_match_score(text):
+    for line in text.splitlines():
+        if line.upper().startswith("MATCH_SCORE:"):
+            raw_value = line.split(":", 1)[1].strip()
+            try:
+                return max(0, min(10, int(raw_value)))
+            except ValueError:
+                return None
+    return None
+
+
+def summarize_match_reason(ai_match_summary):
+    for line in ai_match_summary.splitlines():
+        if line.upper().startswith("REASON:"):
+            return line.split(":", 1)[1].strip()
+    return ai_match_summary.strip()
+
+
+def assess_job_match(client, cv_text, job, description):
+    response = client.responses.create(
+        model=OPENAI_MODEL,
+        input=build_match_assessment_prompt(cv_text, job, description),
+    )
+    output_text = response.output_text.strip()
+    match_score = parse_match_score(output_text)
+    if match_score is None:
+        raise ValueError(f"Could not parse MATCH_SCORE from response: {output_text}")
+    return match_score, output_text
+
+
+def generate_cover_letter(client, cv_text, job, description):
+    response = client.responses.create(
+        model=OPENAI_MODEL,
+        input=build_cover_letter_prompt(cv_text, job, description),
+    )
+    return response.output_text.strip()
+
+
+def safe_slug(text):
+    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in text)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "job"
+
+
+def german_date_string():
+    months = [
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+    ]
+    today = dt.date.today()
+    return f"{today.day}. {months[today.month - 1]} {today.year}"
+
+
+def style_paragraph(paragraph, *, space_after_pt=LETTER_SPACE_AFTER_PT):
+    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.JUSTIFY
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(space_after_pt)
+    paragraph.paragraph_format.line_spacing = LETTER_LINE_SPACING
+    for run in paragraph.runs:
+        run.font.name = LETTER_FONT_NAME
+        run.font.size = Pt(LETTER_FONT_SIZE)
+        run.font.color.rgb = LETTER_TEXT_COLOR
+
+
+def style_table_paragraph(paragraph):
+    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = LETTER_LINE_SPACING
+    for run in paragraph.runs:
+        run.font.name = LETTER_FONT_NAME
+        run.font.size = Pt(LETTER_FONT_SIZE)
+        run.font.color.rgb = LETTER_TEXT_COLOR
+
+
+def replace_paragraph_text(paragraph, text, *, bold=None, space_after_pt=LETTER_SPACE_AFTER_PT):
+    paragraph.text = ""
+    run = paragraph.add_run(text)
+    if bold is not None:
+        run.bold = bold
+    style_paragraph(paragraph, space_after_pt=space_after_pt)
+
+
+def insert_paragraph_after(paragraph, text):
+    new_paragraph = paragraph.insert_paragraph_before("")
+    paragraph._p.addnext(new_paragraph._p)
+    new_paragraph.style = paragraph.style
+    if paragraph.alignment is not None:
+        new_paragraph.alignment = paragraph.alignment
+    new_paragraph.add_run(text)
+    style_paragraph(new_paragraph)
+    return new_paragraph
+
+
+def extract_employer_address(job, details):
+    employer = job.get("arbeitgeber") or ""
+    address = {}
+    locations = details.get("stellenlokationen") or []
+    if locations:
+        address = (locations[0] or {}).get("adresse") or {}
+
+    street = " ".join(
+        part for part in [address.get("strasse"), address.get("hausnummer")] if part
+    ).strip()
+    city_line = " ".join(part for part in [address.get("plz"), address.get("ort")] if part).strip()
+
+    return {
+        "employer": employer,
+        "street_line": street,
+        "city_line": city_line,
+    }
+
+
+def fill_template_document(document, subject_text, body_text, employer_address):
+    body_paragraphs = [part.strip() for part in body_text.split("\n\n") if part.strip()]
+
+    for paragraph in document.paragraphs:
+        if paragraph.text == "{{DATE}}":
+            replace_paragraph_text(paragraph, german_date_string())
+        elif paragraph.text == "{{SUBJECT}}":
+            replace_paragraph_text(paragraph, subject_text, bold=True)
+        elif paragraph.text == "{{BODY}}":
+            replace_paragraph_text(paragraph, body_paragraphs[0] if body_paragraphs else "")
+            current = paragraph
+            for extra in body_paragraphs[1:]:
+                current = insert_paragraph_after(current, extra)
+
+    placeholder_map = {
+        "{{EMPLOYER}}": employer_address.get("employer", ""),
+        "{{STREET, HOUSE NUMBER}}": employer_address.get("street_line", ""),
+        "{{POSTAL NUMBER, CITY}}": employer_address.get("city_line", ""),
+    }
+
+    for table in document.tables:
+        for row in table.rows:
+            row.height = None
+            row.height_rule = None
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    text = paragraph.text.strip()
+                    if text in placeholder_map:
+                        replace_paragraph_text(
+                            paragraph,
+                            placeholder_map[text],
+                            space_after_pt=0,
+                        )
+                        style_table_paragraph(paragraph)
+                    else:
+                        style_table_paragraph(paragraph)
+
+
+def save_cover_letter(refnr, job, details, cover_letter):
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    employer = safe_slug(job.get("arbeitgeber", "employer"))
+    title = safe_slug(job.get("titel", "title"))
+    output_path = OUTPUT_DIR / f"{refnr}_{employer}_{title}.docx"
+    document = Document(TEMPLATE_PATH)
+    fill_template_document(
+        document,
+        f"Bewerbung als {job.get('titel', 'Stelle')}",
+        cover_letter,
+        extract_employer_address(job, details),
+    )
+    document.save(output_path)
+    return output_path
+
+
+def save_job_description(refnr, job, details, description, posted):
+    JOB_DESCRIPTION_DIR.mkdir(exist_ok=True)
+    employer = safe_slug(job.get("arbeitgeber", "employer"))
+    title = safe_slug(job.get("titel", "title"))
+    output_path = JOB_DESCRIPTION_DIR / f"{refnr}_{employer}_{title}.docx"
+
+    location = job.get("arbeitsort", {}) or {}
+    address = extract_employer_address(job, details)
+
+    document = Document()
+    heading = document.add_heading(job.get("titel", "Job Description"), level=1)
+    style_paragraph(heading, space_after_pt=LETTER_SPACE_AFTER_PT)
+
+    metadata_lines = [
+        f"Referenznummer: {refnr}",
+        f"Arbeitgeber: {job.get('arbeitgeber') or 'Unbekannt'}",
+        f"Veröffentlicht: {posted or 'Unbekannt'}",
+        f"Ort: {location.get('ort') or 'Unbekannt'}",
+        f"PLZ: {location.get('plz') or 'Unbekannt'}",
+        f"Job-URL: {build_job_page_url(refnr)}",
+    ]
+
+    if address.get("street_line"):
+        metadata_lines.append(f"Adresse: {address['street_line']}")
+    if address.get("city_line"):
+        metadata_lines.append(f"Adresse 2: {address['city_line']}")
+
+    for line in metadata_lines:
+        paragraph = document.add_paragraph(line)
+        style_paragraph(paragraph, space_after_pt=LETTER_SPACE_AFTER_PT)
+
+    document.add_paragraph("")
+    body_paragraphs = [part.strip() for part in (description or "").split("\n\n") if part.strip()]
+    if not body_paragraphs:
+        body_paragraphs = ["Keine Stellenbeschreibung verfügbar."]
+
+    for part in body_paragraphs:
+        paragraph = document.add_paragraph(part)
+        style_paragraph(paragraph, space_after_pt=LETTER_SPACE_AFTER_PT)
+
+    document.save(output_path)
+    return output_path
+
+
+def ensure_workbook(path, headers):
+    if path.exists():
+        return
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(headers)
+    workbook.save(path)
+
+
+def load_logged_refnrs(path):
+    if not path.exists():
+        return set()
+
+    workbook = load_workbook(path)
+    sheet = workbook.active
+    refnrs = set()
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        refnr = row[0]
+        if refnr:
+            refnrs.add(str(refnr))
+    return refnrs
+
+
+def append_row_to_workbook(path, row):
+    workbook = load_workbook(path)
+    sheet = workbook.active
+    sheet.append(row)
+    workbook.save(path)
+
+
+def main():
+    if not get_openai_api_key():
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+
+    client = OpenAI(http_client=HTTPXClient(trust_env=False))
+    cv_text = load_cv_text()
+
+    ensure_workbook(
+        AI_SCORED_JOBS_PATH,
+        [
+            "refnr",
+            "date",
+            "keyword_score",
+            "ai_match_score",
+            "title",
+            "employer",
+            "city",
+            "reason",
+        ],
+    )
+    ensure_workbook(
+        AI_WRITTEN_JOBS_PATH,
+        [
+            "refnr",
+            "date",
+            "keyword_score",
+            "ai_match_score",
+            "title",
+            "employer",
+            "city",
+            "job_url",
+            "cover_letter_path",
+        ],
+    )
+
+    scored_refnrs = load_logged_refnrs(AI_SCORED_JOBS_PATH)
+    written_refnrs = load_logged_refnrs(AI_WRITTEN_JOBS_PATH)
+
+    search_terms = [
+        "Türkisch",
+        "Migration",
+        "Geflüchtete",
+        "Sociology",
+        "Integration",
+        "Farsi",
+        "Sozialbetreuer",
+        "Persisch",
+        "Soziologie",
+        "Internationale Beziehungen",
+        "Sozialwissenschaftler",
+        "Flüchtlinge",
+        "Mehrsprachigkeit",
+        "sozialbetreuer",
+        "Soziologie",
+        "zuwanderer",
+    ]
+
+    all_jobs = []
+
+    for term in search_terms:
+        try:
+            jobs = search_jobs(term)
+        except requests.RequestException as exc:
+            print(f"Search failed for '{term}': {exc}")
+            continue
+        all_jobs.extend(jobs)
+
+    unique_jobs = {}
+    for job in all_jobs:
+        refnr = job.get("refnr")
+        if refnr:
+            unique_jobs[refnr] = job
+
+    jobs = list(unique_jobs.values())
+    scored_jobs = []
+
+    for job in jobs:
+        refnr = job.get("refnr")
+        try:
+            details = get_job_details(refnr)
+        except requests.RequestException as exc:
+            print(f"Details failed for '{refnr}': {exc}")
+            continue
+
+        description = details.get("stellenangebotsBeschreibung")
+        score = score_job(job, description)
+        posted = job.get("aktuelleVeroeffentlichungsdatum")
+        scored_jobs.append((posted, score, job, description, refnr, details))
+
+    scored_jobs.sort(
+        key=lambda x: (x[1], x[0] or ""),
+        reverse=True,
+    )
+
+    number = 0
+    generated_count = 0
+    ai_available = True
+
+    for posted, score, job, description, refnr, details in scored_jobs:
+        if score < MIN_SCORE_TO_PRINT:
+            continue
+
+        number += 1
+        print("-----------------------------------------------------------------------------\n")
+        print(f"id = {refnr}")
+
+        location = job.get("arbeitsort", {}) or {}
+        city = location.get("ort")
+        postal = location.get("plz")
+
+        print(f"{city}, {postal}, {location}")
+        print(f"no. {number} | date: {posted} | score: {score}")
+        print(job.get("titel"), "-", job.get("arbeitgeber"))
+        print(description[:5000] if description else "No description")
+
+        if generated_count >= MAX_COVER_LETTERS:
+            print("Reached cover letter limit for this run.")
+            continue
+
+        if not ai_available:
+            print("AI cover letter generation is unavailable for this run.")
+            continue
+
+        if refnr in scored_refnrs:
+            print("Job was already sent to AI in a previous run. Skipping AI scoring.")
+            continue
+
+        try:
+            print("Assessing profile match...")
+            ai_match_score, ai_match_summary = assess_job_match(
+                client,
+                cv_text,
+                job,
+                description,
+            )
+            print(ai_match_summary)
+
+            append_row_to_workbook(
+                AI_SCORED_JOBS_PATH,
+                [
+                    refnr,
+                    posted,
+                    score,
+                    ai_match_score,
+                    job.get("titel"),
+                    job.get("arbeitgeber"),
+                    city,
+                    summarize_match_reason(ai_match_summary),
+                ],
+            )
+            scored_refnrs.add(refnr)
+
+            if ai_match_score < MIN_AI_MATCH_SCORE:
+                print(
+                    f"Skipping cover letter because AI match score is "
+                    f"{ai_match_score}/10, below {MIN_AI_MATCH_SCORE}/10."
+                )
+                continue
+
+            print("Generating cover letter...")
+            cover_letter = generate_cover_letter(client, cv_text, job, description)
+        except RateLimitError as exc:
+            print(f"OpenAI quota error: {exc}")
+            print("Disabling AI cover letter generation for the rest of this run.")
+            ai_available = False
+            continue
+        except Exception as exc:
+            print(f"Cover letter generation failed for '{refnr}': {exc}")
+            continue
+
+        output_path = save_cover_letter(refnr, job, details, cover_letter)
+        description_path = save_job_description(refnr, job, details, description, posted)
+        generated_count += 1
+
+        if refnr not in written_refnrs:
+            append_row_to_workbook(
+                AI_WRITTEN_JOBS_PATH,
+                [
+                    refnr,
+                    posted,
+                    score,
+                    ai_match_score,
+                    job.get("titel"),
+                    job.get("arbeitgeber"),
+                    city,
+                    build_job_page_url(refnr),
+                    str(output_path),
+                ],
+            )
+            written_refnrs.add(refnr)
+
+        print(f"cover letter saved to: {output_path}")
+        print(f"job description saved to: {description_path}")
+        print(cover_letter)
+
+    print("-----------------------------------------------------------------------------")
+    print(f"New cover letters generated in this run: {generated_count}")
+
+
+if __name__ == "__main__":
+    main()
