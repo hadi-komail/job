@@ -48,7 +48,7 @@ REQUEST_RETRIES = 1
 REQUEST_RETRY_DELAY_SECONDS = 0
 SEARCH_PAGE_SIZE = 10
 SEARCH_MAX_PAGES = 1
-MIN_SCORE_TO_PRINT = 5
+MIN_SCORE_TO_PRINT = 2
 MAX_COVER_LETTERS = 10
 MIN_AI_MATCH_SCORE = 7
 CV_PATH = Path("about-ai.txt")
@@ -624,6 +624,7 @@ def main():
     ]
 
     all_jobs = []
+    job_terms = {}
 
     for term in search_terms:
         try:
@@ -631,6 +632,10 @@ def main():
         except requests.RequestException as exc:
             print(f"Search failed for '{term}': {exc}")
             continue
+        for job in jobs:
+            refnr = job.get("refnr")
+            if refnr:
+                job_terms.setdefault(refnr, set()).add(term)
         all_jobs.extend(jobs)
 
     unique_jobs = {}
@@ -678,6 +683,9 @@ def main():
 
         print(f"{city}, {postal}, {location}")
         print(f"no. {number} | date: {posted} | score: {score}")
+        matched_terms = sorted(job_terms.get(refnr, set()))
+        if matched_terms:
+            print(f"Search term: {', '.join(matched_terms)}")
         print(job.get("titel"), "-", job.get("arbeitgeber"))
         print(description[:5000] if description else "No description")
 
