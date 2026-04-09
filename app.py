@@ -3,10 +3,12 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
-from flask import Flask, redirect, render_template_string, request, send_from_directory, url_for
+from flask import Flask, jsonify, redirect, render_template_string, request, send_file, send_from_directory, url_for
 from supabase import create_client
+from docx import Document
 
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -137,6 +139,15 @@ def load_jobs():
 
     jobs.sort(key=sort_key, reverse=True)
     return jobs
+
+
+def fetch_job(refnr):
+    client = get_supabase_client()
+    if client is None:
+        return None
+    response = client.table(SUPABASE_TABLE).select("*").eq("refnr", str(refnr)).limit(1).execute()
+    rows = response.data or []
+    return rows[0] if rows else None
 
 
 @app.get("/")
@@ -579,6 +590,57 @@ def update_job(refnr):
             }
         ).eq("refnr", str(refnr)).execute()
     return redirect(url_for("dashboard"))
+
+
+@app.patch("/api/jobs/<refnr>")
+def update_job_api(refnr):
+    client = get_supabase_client()
+    if client is None:
+        return jsonify({"error": "Supabase is not configured"}), 500
+
+    payload = request.get_json(silent=True) or {}
+    application_status = payload.get("application_status", "not_applied")
+    note = str(payload.get("note", "")).strip()
+    updated_at = payload.get("updated_at") or datetime.now().isoformat()
+
+    response = client.table(SUPABASE_TABLE).update(
+        {
+            "application_status": application_status,
+            "note": note,
+            "updated_at": updated_at,
+        }
+    ).eq("refnr", str(refnr)).execute()
+    return jsonify({"updated": True, "data": response.data or []})
+
+
+@app.get("/download/cover-letter/<refnr>")
+def download_cover_letter(refnr):
+    row = fetch_job(refnr)
+    if not row:
+        return "Cover letter not found", 404
+
+    cover_letter_text = (row.get("cover_letter_text") or "").strip()
+    if not cover_letter_text:
+        return "Cover letter text not found", 404
+
+    title = row.get("title") or "job"
+    employer = row.get("employer") or "employer"
+    file_name = f"{refnr}_{employer}_{title}.docx"
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in file_name)
+
+    document = Document()
+    for part in [p.strip() for p in cover_letter_text.split("\n\n") if p.strip()]:
+        document.add_paragraph(part)
+
+    buffer = BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=safe_name,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
 
 
 @app.get("/download/<folder>/<path:filename>")
