@@ -1,6 +1,7 @@
 from flask import Flask
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 app = Flask(__name__)
@@ -16,12 +17,15 @@ def home():
 
 @app.get("/run")
 def run_script():
-    result = subprocess.run(
-        [sys.executable, str(BASE_DIR / "main.py")],
-        capture_output=True,
-        text=True,
-        cwd=BASE_DIR,
-    )
-
-    output = result.stdout + "\n" + result.stderr
-    return f"<pre>{output}</pre>"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(BASE_DIR / "main.py")],
+            capture_output=True,
+            text=True,
+            cwd=BASE_DIR,
+            timeout=180,
+        )
+        output = result.stdout + "\n" + result.stderr
+        return f"<pre>{output}</pre>"
+    except Exception:
+        return f"<pre>{traceback.format_exc()}</pre>", 500
