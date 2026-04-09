@@ -170,6 +170,9 @@ def dashboard():
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>Job Automation</title>
+      {% if status == "Running" %}
+      <meta http-equiv="refresh" content="5">
+      {% endif %}
       <style>
         :root {
           --bg: #eef3f8;
@@ -266,12 +269,23 @@ def dashboard():
           font-family: Consolas, monospace;
           font-size: 12px;
           line-height: 1.4;
-          max-height: 280px;
+          min-height: 180px;
+          max-height: 420px;
           overflow: auto;
           background: #0e2133;
           color: #d7e7f5;
           border-radius: 14px;
           padding: 14px;
+        }
+        .log-toolbar {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+        .inline-note {
+          font-size: 12px;
+          color: var(--muted);
         }
         .jobs {
           display: grid;
@@ -399,6 +413,16 @@ def dashboard():
 
         <div class="section-title">Recent Logs</div>
         <div class="panel">
+          <div class="log-toolbar">
+            <a class="button secondary" style="width:auto;" href="/logs" target="_blank" rel="noopener">Open Full Logs</a>
+            <div class="inline-note">
+              {% if status == "Running" %}
+              Auto-refreshing every 5 seconds while running.
+              {% else %}
+              Refresh the page after a new run to see updated logs.
+              {% endif %}
+            </div>
+          </div>
           <div class="logs">{{ recent_logs }}</div>
         </div>
 
@@ -501,6 +525,61 @@ def run_script():
     )
     save_run_state("running")
     return redirect(url_for("dashboard"))
+
+
+@app.get("/logs")
+def logs():
+    running = is_running()
+    run_state = load_run_state()
+    content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    return render_template_string(
+        """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Run Logs</title>
+          {% if running %}
+          <meta http-equiv="refresh" content="5">
+          {% endif %}
+          <style>
+            body {
+              margin: 0;
+              padding: 18px;
+              background: #0c1b2a;
+              color: #d7e7f5;
+              font-family: Consolas, monospace;
+            }
+            .top {
+              margin-bottom: 14px;
+              font-family: "Segoe UI", Arial, sans-serif;
+            }
+            a {
+              color: #8dc5ff;
+            }
+            pre {
+              white-space: pre-wrap;
+              line-height: 1.45;
+              font-size: 13px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="top">
+            <div><strong>Status:</strong> {{ run_state.status }}</div>
+            <div><strong>Started:</strong> {{ run_state.started_at or "—" }}</div>
+            <div><strong>Finished:</strong> {{ run_state.finished_at or "—" }}</div>
+            <div><a href="/">Back to dashboard</a></div>
+          </div>
+          <pre>{{ content }}</pre>
+        </body>
+        </html>
+        """,
+        content=content,
+        running=running,
+        run_state=run_state,
+    )
 
 
 @app.post("/jobs/<refnr>/update")
