@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, redirect, render_template_string, request, send_from_directory, url_for
-from openpyxl import load_workbook
+from supabase import create_client
 
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -15,8 +15,7 @@ JOB_DESCRIPTIONS_DIR = BASE_DIR / "job_descriptions"
 LOG_FILE = BASE_DIR / "run.log"
 META_FILE = BASE_DIR / "job_meta.json"
 RUN_STATE_FILE = BASE_DIR / "run_state.json"
-AI_SCORED_JOBS_PATH = BASE_DIR / "ai_scored_jobs.xlsx"
-AI_WRITTEN_JOBS_PATH = BASE_DIR / "ai_cover_letters.xlsx"
+SUPABASE_TABLE = "jobs"
 
 current_process = None
 
@@ -76,19 +75,12 @@ def refresh_run_state():
     current_process = None
 
 
-def read_workbook_rows(path):
-    if not path.exists():
-        return []
-    workbook = load_workbook(path)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if not rows:
-        return []
-    headers = list(rows[0])
-    items = []
-    for row in rows[1:]:
-        items.append({headers[i]: row[i] for i in range(len(headers))})
-    return items
+def get_supabase_client():
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return None
+    return create_client(url, key)
 
 
 def normalize_path_string(path_string):
@@ -103,27 +95,18 @@ def rel_download_path(path):
 
 
 def load_jobs():
-    scored_rows = read_workbook_rows(AI_SCORED_JOBS_PATH)
-    written_rows = read_workbook_rows(AI_WRITTEN_JOBS_PATH)
-    meta = load_json(META_FILE, {})
-
-    written_by_refnr = {str(row["refnr"]): row for row in written_rows if row.get("refnr")}
+    client = get_supabase_client()
+    if client is None:
+        return []
+    response = client.table(SUPABASE_TABLE).select("*").order("date", desc=True).execute()
+    rows = response.data or []
     jobs = []
-
-    for row in scored_rows:
+    for row in rows:
         refnr = str(row.get("refnr", "")).strip()
         if not refnr:
             continue
-
-        written = written_by_refnr.get(refnr, {})
-        cover_letter_path = normalize_path_string(written.get("cover_letter_path"))
-        job_description_path = None
-        if cover_letter_path:
-            candidate = JOB_DESCRIPTIONS_DIR / cover_letter_path.name
-            if candidate.exists():
-                job_description_path = candidate
-
-        meta_item = meta.get(refnr, {})
+        cover_letter_path = normalize_path_string(row.get("cover_letter_path"))
+        job_description_path = normalize_path_string(row.get("job_description_path"))
         jobs.append(
             {
                 "refnr": refnr,
@@ -134,13 +117,13 @@ def load_jobs():
                 "employer": row.get("employer") or "",
                 "city": row.get("city") or "",
                 "reason": row.get("reason") or "",
-                "job_url": written.get("job_url") or "",
+                "job_url": row.get("job_url") or "",
                 "cover_letter_path": cover_letter_path,
                 "job_description_path": job_description_path,
-                "has_cover_letter": bool(written),
-                "application_status": meta_item.get("application_status", "not_applied"),
-                "note": meta_item.get("note", ""),
-                "updated_at": meta_item.get("updated_at", ""),
+                "has_cover_letter": bool(row.get("has_cover_letter")),
+                "application_status": row.get("application_status", "not_applied"),
+                "note": row.get("note", ""),
+                "updated_at": row.get("updated_at", ""),
             }
         )
 
@@ -584,13 +567,15 @@ def logs():
 
 @app.post("/jobs/<refnr>/update")
 def update_job(refnr):
-    meta = load_json(META_FILE, {})
-    meta[str(refnr)] = {
-        "application_status": request.form.get("application_status", "not_applied"),
-        "note": request.form.get("note", "").strip(),
-        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-    }
-    save_json(META_FILE, meta)
+    client = get_supabase_client()
+    if client is not None:
+        client.table(SUPABASE_TABLE).update(
+            {
+                "application_status": request.form.get("application_status", "not_applied"),
+                "note": request.form.get("note", "").strip(),
+                "updated_at": datetime.now().isoformat(),
+            }
+        ).eq("refnr", str(refnr)).execute()
     return redirect(url_for("dashboard"))
 
 
