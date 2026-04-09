@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -13,6 +14,7 @@ LETTERS_DIR = BASE_DIR / "letters"
 JOB_DESCRIPTIONS_DIR = BASE_DIR / "job_descriptions"
 LOG_FILE = BASE_DIR / "run.log"
 META_FILE = BASE_DIR / "job_meta.json"
+RUN_STATE_FILE = BASE_DIR / "run_state.json"
 AI_SCORED_JOBS_PATH = BASE_DIR / "ai_scored_jobs.xlsx"
 AI_WRITTEN_JOBS_PATH = BASE_DIR / "ai_cover_letters.xlsx"
 
@@ -21,6 +23,7 @@ current_process = None
 
 def is_running():
     global current_process
+    refresh_run_state()
     return current_process is not None and current_process.poll() is None
 
 
@@ -35,6 +38,42 @@ def load_json(path, default):
 
 def save_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_run_state():
+    return load_json(
+        RUN_STATE_FILE,
+        {
+            "status": "idle",
+            "started_at": "",
+            "finished_at": "",
+            "returncode": None,
+        },
+    )
+
+
+def save_run_state(status, *, returncode=None):
+    state = load_run_state()
+    state["status"] = status
+    if status == "running":
+        state["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        state["finished_at"] = ""
+        state["returncode"] = None
+    else:
+        state["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        state["returncode"] = returncode
+    save_json(RUN_STATE_FILE, state)
+
+
+def refresh_run_state():
+    global current_process
+    if current_process is None:
+        return
+    returncode = current_process.poll()
+    if returncode is None:
+        return
+    save_run_state("completed" if returncode == 0 else "failed", returncode=returncode)
+    current_process = None
 
 
 def read_workbook_rows(path):
@@ -118,7 +157,9 @@ def load_jobs():
 @app.get("/")
 def dashboard():
     jobs = load_jobs()
-    status = "Running" if is_running() else "Idle"
+    running = is_running()
+    run_state = load_run_state()
+    status = "Running" if running else run_state.get("status", "idle").title()
     logs = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
     recent_logs = "\n".join(logs.splitlines()[-40:])
 
@@ -340,6 +381,8 @@ def dashboard():
           <div class="panel">
             <div class="tiny">Runner</div>
             <div style="margin: 8px 0 14px;"><span class="status-badge">{{ status }}</span></div>
+            <div class="tiny">Started: {{ run_state.started_at or "—" }}</div>
+            <div class="tiny" style="margin-bottom: 10px;">Finished: {{ run_state.finished_at or "—" }}</div>
             <a class="button" href="/run">{{ "Already Running" if status == "Running" else "Run Job Search" }}</a>
           </div>
           <div class="panel">
@@ -434,7 +477,7 @@ def dashboard():
     </body>
     </html>
     """
-    return render_template_string(template, jobs=jobs, status=status, recent_logs=recent_logs)
+    return render_template_string(template, jobs=jobs, status=status, recent_logs=recent_logs, run_state=run_state)
 
 
 @app.get("/run")
@@ -445,13 +488,18 @@ def run_script():
         return redirect(url_for("dashboard"))
 
     log_handle = open(LOG_FILE, "w", encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     current_process = subprocess.Popen(
-        [sys.executable, str(BASE_DIR / "main.py")],
+        [sys.executable, "-u", str(BASE_DIR / "main.py")],
         cwd=BASE_DIR,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         text=True,
+        bufsize=1,
+        env=env,
     )
+    save_run_state("running")
     return redirect(url_for("dashboard"))
 
 
