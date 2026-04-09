@@ -23,12 +23,14 @@ openai_module = ensure_import("openai")
 docx_module = ensure_import("docx", "python-docx")
 openpyxl_module = ensure_import("openpyxl")
 httpx_module = ensure_import("httpx")
+supabase_module = ensure_import("supabase")
 OpenAI = openai_module.OpenAI
 RateLimitError = openai_module.RateLimitError
 Document = docx_module.Document
 Workbook = openpyxl_module.Workbook
 load_workbook = openpyxl_module.load_workbook
 HTTPXClient = httpx_module.Client
+create_client = supabase_module.create_client
 Pt = docx_module.shared.Pt
 RGBColor = docx_module.shared.RGBColor
 WD_PARAGRAPH_ALIGNMENT = docx_module.enum.text.WD_PARAGRAPH_ALIGNMENT
@@ -47,7 +49,7 @@ REQUEST_RETRY_DELAY_SECONDS = 0
 SEARCH_PAGE_SIZE = 10
 SEARCH_MAX_PAGES = 1
 MIN_SCORE_TO_PRINT = 2
-MAX_COVER_LETTERS = 1
+MAX_COVER_LETTERS = 10
 MIN_AI_MATCH_SCORE = 7
 CV_PATH = Path("about-ai.txt")
 OUTPUT_DIR = Path("letters")
@@ -61,6 +63,7 @@ LETTER_FONT_SIZE = 9
 LETTER_SPACE_AFTER_PT = 6
 LETTER_TEXT_COLOR = RGBColor(31, 55, 99)
 LETTER_LINE_SPACING = 1.5
+SUPABASE_TABLE = "jobs"
 
 
 def encode_refnr(refnr):
@@ -197,6 +200,20 @@ def get_openai_api_key():
                     return saved_value
 
     return None
+
+
+def get_supabase_client():
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_ANON_KEY")
+    if not url or not key:
+        return None
+    return create_client(url, key)
+
+
+def upsert_job_in_supabase(client, payload):
+    if client is None:
+        return
+    client.table(SUPABASE_TABLE).upsert(payload).execute()
 
 
 def build_cover_letter_prompt(cv_text, job, description):
@@ -520,6 +537,7 @@ def main():
         raise RuntimeError("OPENAI_API_KEY is not set.")
 
     client = OpenAI(http_client=HTTPXClient(trust_env=False))
+    supabase = get_supabase_client()
     cv_text = load_cv_text()
 
     ensure_workbook(
@@ -665,6 +683,24 @@ def main():
                     summarize_match_reason(ai_match_summary),
                 ],
             )
+            upsert_job_in_supabase(
+                supabase,
+                {
+                    "refnr": refnr,
+                    "date": posted,
+                    "keyword_score": score,
+                    "ai_match_score": ai_match_score,
+                    "title": job.get("titel"),
+                    "employer": job.get("arbeitgeber"),
+                    "city": city,
+                    "reason": summarize_match_reason(ai_match_summary),
+                    "job_url": build_job_page_url(refnr),
+                    "cover_letter_path": None,
+                    "job_description_path": None,
+                    "has_cover_letter": False,
+                    "updated_at": dt.datetime.now().isoformat(),
+                },
+            )
             scored_refnrs.add(refnr)
 
             if ai_match_score < MIN_AI_MATCH_SCORE:
@@ -705,6 +741,25 @@ def main():
                 ],
             )
             written_refnrs.add(refnr)
+
+        upsert_job_in_supabase(
+            supabase,
+            {
+                "refnr": refnr,
+                "date": posted,
+                "keyword_score": score,
+                "ai_match_score": ai_match_score,
+                "title": job.get("titel"),
+                "employer": job.get("arbeitgeber"),
+                "city": city,
+                "reason": summarize_match_reason(ai_match_summary),
+                "job_url": build_job_page_url(refnr),
+                "cover_letter_path": str(output_path).replace("\\", "/"),
+                "job_description_path": str(description_path).replace("\\", "/"),
+                "has_cover_letter": True,
+                "updated_at": dt.datetime.now().isoformat(),
+            },
+        )
 
         print(f"cover letter saved to: {output_path}")
         print(f"job description saved to: {description_path}")
