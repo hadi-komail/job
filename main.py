@@ -49,7 +49,7 @@ REQUEST_RETRY_DELAY_SECONDS = 0
 SEARCH_PAGE_SIZE = 10
 SEARCH_MAX_PAGES = 1
 MIN_SCORE_TO_PRINT = 2
-MAX_COVER_LETTERS = 2
+MAX_COVER_LETTERS = 10
 MIN_AI_MATCH_SCORE = 7
 CV_PATH = Path("about-ai.txt")
 OUTPUT_DIR = Path("letters")
@@ -214,6 +214,24 @@ def upsert_job_in_supabase(client, payload):
     if client is None:
         return
     client.table(SUPABASE_TABLE).upsert(payload).execute()
+
+
+def load_existing_jobs_from_supabase(client):
+    if client is None:
+        return {}
+
+    response = client.table(SUPABASE_TABLE).select(
+        "refnr,ai_match_score,has_cover_letter,cover_letter_text"
+    ).execute()
+    rows = response.data or []
+
+    existing = {}
+    for row in rows:
+        refnr = str(row.get("refnr") or "").strip()
+        if not refnr:
+            continue
+        existing[refnr] = row
+    return existing
 
 
 def build_cover_letter_prompt(cv_text, job, description):
@@ -538,6 +556,7 @@ def main():
 
     client = OpenAI(http_client=HTTPXClient(trust_env=False))
     supabase = get_supabase_client()
+    supabase_jobs = load_existing_jobs_from_supabase(supabase)
     cv_text = load_cv_text()
 
     ensure_workbook(
@@ -570,6 +589,20 @@ def main():
 
     scored_refnrs = load_logged_refnrs(AI_SCORED_JOBS_PATH)
     written_refnrs = load_logged_refnrs(AI_WRITTEN_JOBS_PATH)
+
+    supabase_scored_refnrs = {
+        refnr
+        for refnr, row in supabase_jobs.items()
+        if row.get("ai_match_score") is not None
+    }
+    supabase_written_refnrs = {
+        refnr
+        for refnr, row in supabase_jobs.items()
+        if row.get("has_cover_letter") or row.get("cover_letter_text")
+    }
+
+    scored_refnrs |= supabase_scored_refnrs
+    written_refnrs |= supabase_written_refnrs
 
     search_terms = [
         "Türkisch",
@@ -656,6 +689,11 @@ def main():
             print("AI cover letter generation is unavailable for this run.")
             continue
 
+        existing_supabase_job = supabase_jobs.get(refnr) or {}
+        if existing_supabase_job.get("has_cover_letter") or existing_supabase_job.get("cover_letter_text"):
+            print("Job already has a generated cover letter in Supabase. Skipping AI scoring and generation.")
+            continue
+
         if refnr in scored_refnrs:
             print("Job was already sent to AI in a previous run. Skipping AI scoring.")
             continue
@@ -703,6 +741,12 @@ def main():
                     "updated_at": dt.datetime.now().isoformat(),
                 },
             )
+            supabase_jobs[refnr] = {
+                "refnr": refnr,
+                "ai_match_score": ai_match_score,
+                "has_cover_letter": False,
+                "cover_letter_text": None,
+            }
             scored_refnrs.add(refnr)
 
             if ai_match_score < MIN_AI_MATCH_SCORE:
@@ -764,6 +808,12 @@ def main():
                 "updated_at": dt.datetime.now().isoformat(),
             },
         )
+        supabase_jobs[refnr] = {
+            "refnr": refnr,
+            "ai_match_score": ai_match_score,
+            "has_cover_letter": True,
+            "cover_letter_text": cover_letter,
+        }
 
         print(f"cover letter saved to: {output_path}")
         print(f"job description saved to: {description_path}")
