@@ -618,9 +618,7 @@ def main():
         "Sozialwissenschaftler",
         "Flüchtlinge",
         "Mehrsprachigkeit",
-        "sozialbetreuer",
-        "Soziologie",
-        "zuwanderer",
+        "Zuwanderer",
     ]
 
     all_jobs = []
@@ -646,6 +644,8 @@ def main():
 
     jobs = list(unique_jobs.values())
     scored_jobs = []
+    skipped_already_scored = 0
+    skipped_existing_letters = 0
 
     for job in jobs:
         refnr = job.get("refnr")
@@ -700,10 +700,12 @@ def main():
         existing_supabase_job = supabase_jobs.get(refnr) or {}
         if existing_supabase_job.get("has_cover_letter") or existing_supabase_job.get("cover_letter_text"):
             print("Job already has a generated cover letter in Supabase. Skipping AI scoring and generation.")
+            skipped_existing_letters += 1
             continue
 
         if refnr in scored_refnrs:
             print("Job was already sent to AI in a previous run. Skipping AI scoring.")
+            skipped_already_scored += 1
             continue
 
         try:
@@ -828,6 +830,11 @@ def main():
         print(cover_letter)
 
     print("-----------------------------------------------------------------------------")
+    print(f"Raw search hits collected: {len(all_jobs)}")
+    print(f"Unique jobs after deduplication: {len(jobs)}")
+    print(f"Jobs passing local score threshold: {number}")
+    print(f"Jobs skipped because already AI-scored: {skipped_already_scored}")
+    print(f"Jobs skipped because a cover letter already exists: {skipped_existing_letters}")
     print(f"New cover letters generated in this run: {generated_count}")
 
 
