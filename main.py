@@ -64,6 +64,7 @@ LETTER_SPACE_AFTER_PT = 6
 LETTER_TEXT_COLOR = RGBColor(29, 39, 49)
 LETTER_LINE_SPACING = 1.5
 SUPABASE_TABLE = "jobs"
+DEFAULT_APPLICATION_STATUS = "not_applied"
 
 
 def encode_refnr(refnr):
@@ -311,7 +312,7 @@ def load_existing_jobs_from_supabase(client):
         return {}
 
     response = client.table(SUPABASE_TABLE).select(
-        "refnr,ai_match_score,has_cover_letter,cover_letter_text"
+        "refnr,job_id,ai_match_score,has_cover_letter,cover_letter_text,application_status,application_result,note"
     ).execute()
     rows = response.data or []
 
@@ -322,6 +323,62 @@ def load_existing_jobs_from_supabase(client):
             continue
         existing[refnr] = row
     return existing
+
+
+def parse_job_id_number(job_id):
+    raw = str(job_id or "").strip()
+    if not raw or "-" not in raw:
+        return None
+    prefix = raw.split("-", 1)[0]
+    try:
+        return int(prefix)
+    except ValueError:
+        return None
+
+
+def build_job_id(number, employer):
+    cleaned_employer = " ".join(str(employer or "Unknown Employer").split())
+    if not cleaned_employer:
+        cleaned_employer = "Unknown Employer"
+    return f"{number:04d}-{cleaned_employer}"
+
+
+def next_job_id_number(existing_jobs):
+    numbers = [
+        parse_job_id_number(row.get("job_id"))
+        for row in existing_jobs.values()
+        if row.get("job_id")
+    ]
+    numbers = [number for number in numbers if number is not None]
+    return (max(numbers) + 1) if numbers else 1
+
+
+def format_log_table(rows):
+    label_width = max(len(label) for label, _ in rows)
+    value_width = max(len(str(value)) for _, value in rows)
+    border = f"+-{'-' * label_width}-+-{'-' * value_width}-+"
+    lines = [border]
+    for label, value in rows:
+        lines.append(f"| {label.ljust(label_width)} | {str(value).ljust(value_width)} |")
+    lines.append(border)
+    return "\n".join(lines)
+
+
+def print_job_summary_table(job_id, employer, title, keyword_score, ai_match_score, search_term):
+    ai_value = ai_match_score if ai_match_score not in (None, "") else "—"
+    search_value = search_term or "—"
+    print(
+        format_log_table(
+            [
+                ("Job ID", job_id),
+                ("Employer", employer or "Unknown employer"),
+                ("Job Title", title or "Untitled"),
+                ("Keyword Score", keyword_score),
+                ("AI Matching Score", ai_value),
+                ("Search Term", search_value),
+            ]
+        )
+    )
 
 
 def build_cover_letter_prompt(cv_text, job, description):
@@ -647,6 +704,7 @@ def main():
     client = OpenAI(http_client=HTTPXClient(trust_env=False))
     supabase = get_supabase_client()
     supabase_jobs = load_existing_jobs_from_supabase(supabase)
+    next_job_number = next_job_id_number(supabase_jobs)
     cv_text = load_cv_text()
 
     ensure_workbook(
@@ -764,38 +822,122 @@ def main():
             continue
 
         number += 1
-        print("-----------------------------------------------------------------------------\n")
-        print(f"id = {refnr}")
+        existing_supabase_job = dict(supabase_jobs.get(refnr) or {})
+        job_id = existing_supabase_job.get("job_id")
+        if not job_id:
+            job_id = build_job_id(next_job_number, job.get("arbeitgeber"))
+            next_job_number += 1
+            existing_supabase_job["job_id"] = job_id
 
         location = job.get("arbeitsort", {}) or {}
         city = location.get("ort")
         postal = location.get("plz")
+        matched_terms = sorted(job_terms.get(refnr, set()))
+        search_term_text = ", ".join(matched_terms)
+        current_application_status = (
+            existing_supabase_job.get("application_status") or DEFAULT_APPLICATION_STATUS
+        )
+        current_application_result = existing_supabase_job.get("application_result") or ""
+        current_note = existing_supabase_job.get("note") or ""
+        current_ai_match_score = existing_supabase_job.get("ai_match_score")
+
+        upsert_job_in_supabase(
+            supabase,
+            {
+                "refnr": refnr,
+                "job_id": job_id,
+                "date": posted,
+                "keyword_score": score,
+                "ai_match_score": current_ai_match_score,
+                "title": job.get("titel"),
+                "employer": job.get("arbeitgeber"),
+                "city": city,
+                "reason": existing_supabase_job.get("reason"),
+                "job_url": build_job_page_url(refnr),
+                "cover_letter_path": existing_supabase_job.get("cover_letter_path"),
+                "job_description_path": existing_supabase_job.get("job_description_path"),
+                "cover_letter_text": existing_supabase_job.get("cover_letter_text"),
+                "job_description_text": existing_supabase_job.get("job_description_text"),
+                "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
+                "application_status": current_application_status,
+                "application_result": current_application_result,
+                "note": current_note,
+                "updated_at": dt.datetime.now().isoformat(),
+            },
+        )
+        existing_supabase_job.update(
+            {
+                "refnr": refnr,
+                "job_id": job_id,
+                "ai_match_score": current_ai_match_score,
+                "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
+                "cover_letter_text": existing_supabase_job.get("cover_letter_text"),
+                "application_status": current_application_status,
+                "application_result": current_application_result,
+                "note": current_note,
+            }
+        )
+        supabase_jobs[refnr] = existing_supabase_job
+
+        print("-----------------------------------------------------------------------------\n")
+        print(f"Job Refnr: {refnr}")
+        print(f"Job ID: {job_id}")
 
         print(f"{city}, {postal}, {location}")
         print(f"no. {number} | date: {posted} | score: {score}")
-        matched_terms = sorted(job_terms.get(refnr, set()))
         if matched_terms:
-            print(f"Search term: {', '.join(matched_terms)}")
+            print(f"Search term: {search_term_text}")
         print(job.get("titel"), "-", job.get("arbeitgeber"))
         print(description[:5000] if description else "No description")
 
         if generated_count >= MAX_COVER_LETTERS:
             print("Reached cover letter limit for this run.")
+            print_job_summary_table(
+                job_id,
+                job.get("arbeitgeber"),
+                job.get("titel"),
+                score,
+                current_ai_match_score,
+                search_term_text,
+            )
             continue
 
         if not ai_available:
             print("AI cover letter generation is unavailable for this run.")
+            print_job_summary_table(
+                job_id,
+                job.get("arbeitgeber"),
+                job.get("titel"),
+                score,
+                current_ai_match_score,
+                search_term_text,
+            )
             continue
 
-        existing_supabase_job = supabase_jobs.get(refnr) or {}
         if existing_supabase_job.get("has_cover_letter") or existing_supabase_job.get("cover_letter_text"):
             print("Job already has a generated cover letter in Supabase. Skipping AI scoring and generation.")
             skipped_existing_letters += 1
+            print_job_summary_table(
+                job_id,
+                job.get("arbeitgeber"),
+                job.get("titel"),
+                score,
+                current_ai_match_score,
+                search_term_text,
+            )
             continue
 
         if refnr in scored_refnrs:
             print("Job was already sent to AI in a previous run. Skipping AI scoring.")
             skipped_already_scored += 1
+            print_job_summary_table(
+                job_id,
+                job.get("arbeitgeber"),
+                job.get("titel"),
+                score,
+                current_ai_match_score,
+                search_term_text,
+            )
             continue
 
         try:
@@ -825,6 +967,7 @@ def main():
                 supabase,
                 {
                     "refnr": refnr,
+                    "job_id": job_id,
                     "date": posted,
                     "keyword_score": score,
                     "ai_match_score": ai_match_score,
@@ -838,21 +981,37 @@ def main():
                     "cover_letter_text": None,
                     "job_description_text": None,
                     "has_cover_letter": False,
+                    "application_status": current_application_status,
+                    "application_result": current_application_result,
+                    "note": current_note,
                     "updated_at": dt.datetime.now().isoformat(),
                 },
             )
             supabase_jobs[refnr] = {
                 "refnr": refnr,
+                "job_id": job_id,
                 "ai_match_score": ai_match_score,
                 "has_cover_letter": False,
                 "cover_letter_text": None,
+                "application_status": current_application_status,
+                "application_result": current_application_result,
+                "note": current_note,
             }
             scored_refnrs.add(refnr)
+            current_ai_match_score = ai_match_score
 
             if ai_match_score < MIN_AI_MATCH_SCORE:
                 print(
                     f"Skipping cover letter because AI match score is "
                     f"{ai_match_score}/10, below {MIN_AI_MATCH_SCORE}/10."
+                )
+                print_job_summary_table(
+                    job_id,
+                    job.get("arbeitgeber"),
+                    job.get("titel"),
+                    score,
+                    current_ai_match_score,
+                    search_term_text,
                 )
                 continue
 
@@ -862,9 +1021,25 @@ def main():
             print(f"OpenAI quota error: {exc}")
             print("Disabling AI cover letter generation for the rest of this run.")
             ai_available = False
+            print_job_summary_table(
+                job_id,
+                job.get("arbeitgeber"),
+                job.get("titel"),
+                score,
+                current_ai_match_score,
+                search_term_text,
+            )
             continue
         except Exception as exc:
             print(f"Cover letter generation failed for '{refnr}': {exc}")
+            print_job_summary_table(
+                job_id,
+                job.get("arbeitgeber"),
+                job.get("titel"),
+                score,
+                current_ai_match_score,
+                search_term_text,
+            )
             continue
 
         output_path = save_cover_letter(refnr, job, details, cover_letter)
@@ -892,6 +1067,7 @@ def main():
             supabase,
             {
                 "refnr": refnr,
+                "job_id": job_id,
                 "date": posted,
                 "keyword_score": score,
                 "ai_match_score": ai_match_score,
@@ -905,19 +1081,34 @@ def main():
                 "cover_letter_text": cover_letter,
                 "job_description_text": description or "",
                 "has_cover_letter": True,
+                "application_status": current_application_status,
+                "application_result": current_application_result,
+                "note": current_note,
                 "updated_at": dt.datetime.now().isoformat(),
             },
         )
         supabase_jobs[refnr] = {
             "refnr": refnr,
+            "job_id": job_id,
             "ai_match_score": ai_match_score,
             "has_cover_letter": True,
             "cover_letter_text": cover_letter,
+            "application_status": current_application_status,
+            "application_result": current_application_result,
+            "note": current_note,
         }
 
         print(f"cover letter saved to: {output_path}")
         print(f"job description saved to: {description_path}")
         print(cover_letter)
+        print_job_summary_table(
+            job_id,
+            job.get("arbeitgeber"),
+            job.get("titel"),
+            score,
+            current_ai_match_score,
+            search_term_text,
+        )
 
     print("-----------------------------------------------------------------------------")
     print(f"Raw search hits collected: {len(all_jobs)}")
@@ -930,3 +1121,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
