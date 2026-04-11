@@ -148,6 +148,7 @@ def load_jobs():
                 ),
                 "application_result": row.get("application_result", ""),
                 "note": row.get("note", ""),
+                "created_at": row.get("created_at", ""),
                 "updated_at": row.get("updated_at", ""),
             }
         )
@@ -806,6 +807,7 @@ def update_job(refnr):
                 "application_status": request.form.get("application_status", "not_applied"),
                 "application_result": request.form.get("application_result", "").strip(),
                 "note": request.form.get("note", "").strip(),
+                "created_at": fetch_job(refnr).get("created_at") if fetch_job(refnr) else None,
                 "updated_at": datetime.now().isoformat(),
             }
         ).eq("refnr", str(refnr)).execute()
@@ -823,12 +825,14 @@ def update_job_api(refnr):
     application_result = str(payload.get("application_result", "")).strip()
     note = str(payload.get("note", "")).strip()
     updated_at = payload.get("updated_at") or datetime.now().isoformat()
+    existing = fetch_job(refnr) or {}
 
     response = client.table(SUPABASE_TABLE).update(
         {
             "application_status": application_status,
             "application_result": application_result,
             "note": note,
+            "created_at": existing.get("created_at"),
             "updated_at": updated_at,
         }
     ).eq("refnr", str(refnr)).execute()
