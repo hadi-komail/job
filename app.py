@@ -21,6 +21,13 @@ LOG_FILE = BASE_DIR / "run.log"
 META_FILE = BASE_DIR / "job_meta.json"
 RUN_STATE_FILE = BASE_DIR / "run_state.json"
 SUPABASE_TABLE = "jobs"
+STATUS_ORDER = ["not_applied", "to_apply", "applied", "not_to_apply"]
+STATUS_LABELS = {
+    "not_applied": "Not Applied",
+    "to_apply": "To Apply",
+    "applied": "Applied",
+    "not_to_apply": "Not to Apply",
+}
 LETTER_FONT_NAME = "Helvetica"
 LETTER_FONT_SIZE = 9
 LETTER_SPACE_AFTER_PT = 6
@@ -120,6 +127,7 @@ def load_jobs():
         jobs.append(
             {
                 "refnr": refnr,
+                "job_id": row.get("job_id") or "",
                 "date": row.get("date") or "",
                 "keyword_score": row.get("keyword_score") or "",
                 "ai_match_score": row.get("ai_match_score") or "",
@@ -134,6 +142,11 @@ def load_jobs():
                 "job_description_text": row.get("job_description_text") or "",
                 "has_cover_letter": bool(row.get("has_cover_letter")),
                 "application_status": row.get("application_status", "not_applied"),
+                "application_status_label": STATUS_LABELS.get(
+                    row.get("application_status", "not_applied"),
+                    "Not Applied",
+                ),
+                "application_result": row.get("application_result", ""),
                 "note": row.get("note", ""),
                 "updated_at": row.get("updated_at", ""),
             }
@@ -142,10 +155,11 @@ def load_jobs():
     def sort_key(item):
         return (
             0 if item["has_cover_letter"] else 1,
+            str(item["job_id"] or ""),
             str(item["date"] or ""),
         )
 
-    jobs.sort(key=sort_key, reverse=True)
+    jobs.sort(key=sort_key)
     return jobs
 
 
@@ -278,9 +292,29 @@ def fill_cover_letter_template(document, row):
     restyle_document(document)
 
 
+def group_jobs_by_status(jobs):
+    grouped = {status: [] for status in STATUS_ORDER}
+    for job in jobs:
+        status = job.get("application_status") or "not_applied"
+        if status not in grouped:
+            status = "not_applied"
+        grouped[status].append(job)
+
+    return [
+        {
+            "key": status,
+            "label": STATUS_LABELS[status],
+            "jobs": grouped[status],
+        }
+        for status in STATUS_ORDER
+    ]
+
+
 @app.get("/")
 def dashboard():
     jobs = load_jobs()
+    grouped_sections = group_jobs_by_status(jobs)
+    application_results = [job for job in jobs if (job.get("application_result") or "").strip()]
     running = is_running()
     run_state = load_run_state()
     status = "Running" if running else run_state.get("status", "idle").title()
@@ -526,7 +560,7 @@ def dashboard():
           <div class="panel">
             <div class="tiny">Jobs in dashboard</div>
             <div style="font-size: 30px; font-weight: 800; margin-top: 6px;">{{ jobs|length }}</div>
-            <div class="tiny">Loaded from Excel tracking files</div>
+            <div class="tiny">Loaded from Supabase</div>
           </div>
           <div class="panel">
             <div class="tiny">Cover letters</div>
@@ -550,18 +584,21 @@ def dashboard():
           <div class="logs">{{ recent_logs }}</div>
         </div>
 
-        <div class="section-title">Tracked Jobs</div>
+        {% for section in grouped_sections %}
+        <div class="section-title">{{ section.label }}</div>
         <div class="jobs">
-          {% for job in jobs %}
+          {% for job in section.jobs %}
           <div class="job">
             <div class="job-top">
               <div class="job-title">{{ job.title }}</div>
               <div class="meta">
+                <span class="chip">{{ job.job_id or job.refnr }}</span>
                 <span class="chip">{{ job.employer }}</span>
                 <span class="chip">{{ job.city }}</span>
                 <span class="chip">Date: {{ job.date }}</span>
                 <span class="chip">Keyword score: {{ job.keyword_score }}</span>
                 <span class="chip">AI match: {{ job.ai_match_score }}/10</span>
+                <span class="chip">{{ job.application_status_label }}</span>
                 <span class="chip">{{ "Cover letter ready" if job.has_cover_letter else "No cover letter" }}</span>
               </div>
             </div>
@@ -581,8 +618,8 @@ def dashboard():
                   <div class="tiny">No saved job description.</div>
                   {% endif %}
 
-                  {% if job.cover_letter_path %}
-                  <a href="{{ url_for('download_file', folder='letters', filename=job.cover_letter_path.name) }}">Download cover letter</a>
+                  {% if job.has_cover_letter %}
+                  <a href="{{ url_for('download_cover_letter', refnr=job.refnr) }}">Download cover letter</a>
                   {% else %}
                   <div class="tiny">No cover letter file.</div>
                   {% endif %}
@@ -601,13 +638,19 @@ def dashboard():
                     <label class="tiny" for="status-{{ job.refnr }}">Application status</label>
                     <select id="status-{{ job.refnr }}" name="application_status">
                       <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Not applied</option>
+                      <option value="to_apply" {{ "selected" if job.application_status == "to_apply" else "" }}>To apply</option>
                       <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Applied</option>
+                      <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Not to apply</option>
                     </select>
+
+                    <label class="tiny" for="result-{{ job.refnr }}">Application result</label>
+                    <textarea id="result-{{ job.refnr }}" name="application_result" placeholder="Interview, rejection, no reply, accepted...">{{ job.application_result }}</textarea>
 
                     <label class="tiny" for="note-{{ job.refnr }}">Note</label>
                     <textarea id="note-{{ job.refnr }}" name="note" placeholder="Add your note here...">{{ job.note }}</textarea>
 
                     <button class="button secondary" type="submit">Save</button>
+                    <div class="tiny">Job ID: {{ job.job_id or "Pending" }}</div>
                     <div class="tiny">Refnr: {{ job.refnr }}</div>
                     {% if job.updated_at %}
                     <div class="tiny">Last updated: {{ job.updated_at }}</div>
@@ -618,14 +661,62 @@ def dashboard():
             </div>
           </div>
           {% else %}
-          <div class="panel">No jobs found yet. Run the job search first.</div>
+          <div class="panel">No jobs in this section yet.</div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+
+        <div class="section-title">Application Results</div>
+        <div class="jobs">
+          {% for job in application_results %}
+          <div class="job">
+            <div class="job-top">
+              <div class="job-title">{{ job.title }}</div>
+              <div class="meta">
+                <span class="chip">{{ job.job_id or job.refnr }}</span>
+                <span class="chip">{{ job.employer }}</span>
+                <span class="chip">{{ job.application_status_label }}</span>
+              </div>
+            </div>
+            <div class="job-body">
+              <div class="stack">
+                <div class="card">
+                  <h3>Application Outcome</h3>
+                  <p class="reason">{{ job.application_result }}</p>
+                </div>
+              </div>
+              <div class="stack">
+                <div class="card">
+                  <h3>Quick Links</h3>
+                  <div class="links">
+                    {% if job.job_url %}
+                    <a href="{{ job.job_url }}" target="_blank" rel="noopener">Open job listing</a>
+                    {% endif %}
+                    {% if job.cover_letter_path %}
+                    <a href="{{ url_for('download_cover_letter', refnr=job.refnr) }}">Download cover letter</a>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div class="panel">No application outcomes recorded yet.</div>
           {% endfor %}
         </div>
       </div>
     </body>
     </html>
     """
-    return render_template_string(template, jobs=jobs, status=status, recent_logs=recent_logs, run_state=run_state)
+    return render_template_string(
+        template,
+        jobs=jobs,
+        grouped_sections=grouped_sections,
+        application_results=application_results,
+        status=status,
+        recent_logs=recent_logs,
+        run_state=run_state,
+    )
 
 
 @app.get("/run")
@@ -713,6 +804,7 @@ def update_job(refnr):
         client.table(SUPABASE_TABLE).update(
             {
                 "application_status": request.form.get("application_status", "not_applied"),
+                "application_result": request.form.get("application_result", "").strip(),
                 "note": request.form.get("note", "").strip(),
                 "updated_at": datetime.now().isoformat(),
             }
@@ -728,12 +820,14 @@ def update_job_api(refnr):
 
     payload = request.get_json(silent=True) or {}
     application_status = payload.get("application_status", "not_applied")
+    application_result = str(payload.get("application_result", "")).strip()
     note = str(payload.get("note", "")).strip()
     updated_at = payload.get("updated_at") or datetime.now().isoformat()
 
     response = client.table(SUPABASE_TABLE).update(
         {
             "application_status": application_status,
+            "application_result": application_result,
             "note": note,
             "updated_at": updated_at,
         }
