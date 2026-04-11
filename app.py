@@ -838,7 +838,7 @@ def update_job_api(refnr):
     return jsonify({"updated": True, "data": response.data or []})
 
 
-@app.get("/download/cover-letter/<refnr>")
+@app.get("/download/cover-letter/<job_id>")
 def download_cover_letter(refnr, job_id):
     row = fetch_job(refnr)
     if not row:
