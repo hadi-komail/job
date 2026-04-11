@@ -6,7 +6,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, render_template_string, request, send_file, send_from_directory, url_for
+from flask import Flask, jsonify, redirect, render_template_string, request, send_file, url_for
 from supabase import create_client
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
@@ -14,8 +14,6 @@ from docx.shared import Pt, RGBColor
 
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
-LETTERS_DIR = BASE_DIR / "letters"
-JOB_DESCRIPTIONS_DIR = BASE_DIR / "job_descriptions"
 TEMPLATE_PATH = BASE_DIR / "cover_letter_template.docx"
 LOG_FILE = BASE_DIR / "run.log"
 META_FILE = BASE_DIR / "job_meta.json"
@@ -168,6 +166,15 @@ def fetch_job(refnr):
     if client is None:
         return None
     response = client.table(SUPABASE_TABLE).select("*").eq("refnr", str(refnr)).limit(1).execute()
+    rows = response.data or []
+    return rows[0] if rows else None
+
+
+def fetch_job_by_job_id(job_id):
+    client = get_supabase_client()
+    if client is None:
+        return None
+    response = client.table(SUPABASE_TABLE).select("*").eq("job_id", str(job_id)).limit(1).execute()
     rows = response.data or []
     return rows[0] if rows else None
 
@@ -612,14 +619,8 @@ def dashboard():
                   <div class="tiny">No job URL recorded yet.</div>
                   {% endif %}
 
-                  {% if job.job_description_path %}
-                  <a href="{{ url_for('download_file', folder='job_descriptions', filename=job.job_description_path.name) }}">Download job description</a>
-                  {% else %}
-                  <div class="tiny">No saved job description.</div>
-                  {% endif %}
-
                   {% if job.has_cover_letter %}
-                  <a href="{{ url_for('download_cover_letter', refnr=job.refnr) }}">Download cover letter</a>
+                  <a href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Download cover letter</a>
                   {% else %}
                   <div class="tiny">No cover letter file.</div>
                   {% endif %}
@@ -692,8 +693,8 @@ def dashboard():
                     {% if job.job_url %}
                     <a href="{{ job.job_url }}" target="_blank" rel="noopener">Open job listing</a>
                     {% endif %}
-                    {% if job.cover_letter_path %}
-                    <a href="{{ url_for('download_cover_letter', refnr=job.refnr) }}">Download cover letter</a>
+                    {% if job.has_cover_letter %}
+                    <a href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Download cover letter</a>
                     {% endif %}
                   </div>
                 </div>
@@ -838,9 +839,12 @@ def update_job_api(refnr):
     return jsonify({"updated": True, "data": response.data or []})
 
 
-@app.get("/download/cover-letter/<job_id>")
-def download_cover_letter(refnr, job_id):
-    row = fetch_job(refnr)
+@app.get("/download/cover-letter/<path:job_ai>")
+def download_cover_letter(job_ai):
+    refnr = request.args.get("refnr", "").strip()
+    row = fetch_job(refnr) if refnr else None
+    if row is None:
+        row = fetch_job_by_job_id(job_ai)
     if not row:
         return "Cover letter not found", 404
 
@@ -850,9 +854,8 @@ def download_cover_letter(refnr, job_id):
     if not TEMPLATE_PATH.exists():
         return "Cover letter template not found", 500
 
-    title = row.get("title") or "job"
-    employer = row.get("employer") or "employer"
-    file_name = f"hadi-komail-anschreibe-{job_id}.docx"
+    download_id = str(job_ai or row.get("job_id") or row.get("refnr") or "job").strip()
+    file_name = f"hadi-komail-anschreibe-{download_id}.docx"
     safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in file_name)
 
     document = Document(TEMPLATE_PATH)
@@ -867,18 +870,6 @@ def download_cover_letter(refnr, job_id):
         download_name=safe_name,
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
-
-
-@app.get("/download/<folder>/<path:filename>")
-def download_file(folder, filename):
-    allowed = {
-        "letters": LETTERS_DIR,
-        "job_descriptions": JOB_DESCRIPTIONS_DIR,
-    }
-    if folder not in allowed:
-        return "Folder not allowed", 404
-    return send_from_directory(allowed[folder], filename, as_attachment=True)
-
 
 if __name__ == "__main__":
     app.run(debug=True)
