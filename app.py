@@ -115,7 +115,7 @@ def load_jobs():
     client = get_supabase_client()
     if client is None:
         return []
-    response = client.table(SUPABASE_TABLE).select("*").order("date", desc=True).execute()
+    response = client.table(SUPABASE_TABLE).select("*").order("created_at", desc=True).execute()
     rows = response.data or []
     jobs = []
     for row in rows:
@@ -155,12 +155,11 @@ def load_jobs():
 
     def sort_key(item):
         return (
-            0 if item["has_cover_letter"] else 1,
-            str(item["job_id"] or ""),
-            str(item["date"] or ""),
+            str(item["created_at"] or ""),
+            str(item["refnr"] or ""),
         )
 
-    jobs.sort(key=sort_key)
+    jobs.sort(key=sort_key, reverse=True)
     return jobs
 
 
@@ -840,7 +839,7 @@ def update_job_api(refnr):
 
 
 @app.get("/download/cover-letter/<refnr>")
-def download_cover_letter(refnr):
+def download_cover_letter(refnr, job_id):
     row = fetch_job(refnr)
     if not row:
         return "Cover letter not found", 404
@@ -853,7 +852,7 @@ def download_cover_letter(refnr):
 
     title = row.get("title") or "job"
     employer = row.get("employer") or "employer"
-    file_name = f"{refnr}_{employer}_{title}.docx"
+    file_name = f"hadi-komail-anschreibe-{job_id}.docx"
     safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in file_name)
 
     document = Document(TEMPLATE_PATH)
