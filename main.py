@@ -632,11 +632,11 @@ def fill_template_document(document, subject_text, body_text, employer_address):
                         style_table_paragraph(paragraph)
 
 
-def save_cover_letter(refnr, job, details, cover_letter):
+def save_cover_letter(job_id, job, details, cover_letter):
     OUTPUT_DIR.mkdir(exist_ok=True)
     employer = safe_slug(job.get("arbeitgeber", "employer"))
     title = safe_slug(job.get("titel", "title"))
-    output_path = OUTPUT_DIR / f"{refnr}_{employer}_{title}.docx"
+    output_path = OUTPUT_DIR / f"hadi-komail-anschreibe-{job_id}.docx"
     document = Document(TEMPLATE_PATH)
     fill_template_document(
         document,
@@ -1134,7 +1134,7 @@ def main():
             )
             continue
 
-        output_path = save_cover_letter(refnr, job, details, cover_letter)
+        output_path = save_cover_letter(job_id, job, details, cover_letter)
         description_path = save_job_description(refnr, job, details, description, posted)
         generated_count += 1
 
