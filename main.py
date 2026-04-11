@@ -79,6 +79,10 @@ def build_job_page_url(refnr):
     )
 
 
+def discovery_timestamp(base_time, offset):
+    return (base_time + dt.timedelta(microseconds=offset)).isoformat()
+
+
 def get_json(url, *, params=None):
     last_exc = None
 
@@ -312,7 +316,7 @@ def load_existing_jobs_from_supabase(client):
         return {}
 
     response = client.table(SUPABASE_TABLE).select(
-        "refnr,job_id,ai_match_score,has_cover_letter,cover_letter_text,application_status,application_result,note"
+        "refnr,job_id,ai_match_score,has_cover_letter,cover_letter_text,application_status,application_result,note,created_at,updated_at,reason,cover_letter_path,job_description_path,job_description_text"
     ).execute()
     rows = response.data or []
 
@@ -343,16 +347,6 @@ def build_job_id(number, employer):
     return f"{number:04d}-{cleaned_employer}"
 
 
-def next_job_id_number(existing_jobs):
-    numbers = [
-        parse_job_id_number(row.get("job_id"))
-        for row in existing_jobs.values()
-        if row.get("job_id")
-    ]
-    numbers = [number for number in numbers if number is not None]
-    return (max(numbers) + 1) if numbers else 1
-
-
 def format_log_table(rows):
     label_width = max(len(label) for label, _ in rows)
     value_width = max(len(str(value)) for _, value in rows)
@@ -379,6 +373,38 @@ def print_job_summary_table(job_id, employer, title, keyword_score, ai_match_sco
             ]
         )
     )
+
+
+def recompute_cover_letter_job_ids(client):
+    if client is None:
+        return {}
+
+    response = client.table(SUPABASE_TABLE).select(
+        "refnr,employer,created_at,has_cover_letter,cover_letter_text"
+    ).execute()
+    rows = response.data or []
+    covered_rows = [
+        row
+        for row in rows
+        if row.get("has_cover_letter") or row.get("cover_letter_text")
+    ]
+    covered_rows.sort(
+        key=lambda row: (
+            str(row.get("created_at") or ""),
+            str(row.get("refnr") or ""),
+        )
+    )
+
+    updated_ids = {}
+    for index, row in enumerate(covered_rows, start=1):
+        refnr = str(row.get("refnr") or "").strip()
+        if not refnr:
+            continue
+        job_id = build_job_id(index, row.get("employer"))
+        client.table(SUPABASE_TABLE).update({"job_id": job_id}).eq("refnr", refnr).execute()
+        updated_ids[refnr] = job_id
+
+    return updated_ids
 
 
 def build_cover_letter_prompt(cv_text, job, description):
@@ -704,7 +730,6 @@ def main():
     client = OpenAI(http_client=HTTPXClient(trust_env=False))
     supabase = get_supabase_client()
     supabase_jobs = load_existing_jobs_from_supabase(supabase)
-    next_job_number = next_job_id_number(supabase_jobs)
     cv_text = load_cv_text()
 
     ensure_workbook(
@@ -771,6 +796,9 @@ def main():
 
     all_jobs = []
     job_terms = {}
+    first_seen_at = {}
+    discovery_base_time = dt.datetime.now(dt.timezone.utc)
+    discovery_counter = 0
 
     for term in search_terms:
         try:
@@ -782,6 +810,10 @@ def main():
             refnr = job.get("refnr")
             if refnr:
                 job_terms.setdefault(refnr, set()).add(term)
+                existing_row = supabase_jobs.get(refnr) or {}
+                if refnr not in first_seen_at and not existing_row.get("created_at"):
+                    first_seen_at[refnr] = discovery_timestamp(discovery_base_time, discovery_counter)
+                    discovery_counter += 1
         all_jobs.extend(jobs)
 
     unique_jobs = {}
@@ -794,6 +826,61 @@ def main():
     scored_jobs = []
     skipped_already_scored = 0
     skipped_existing_letters = 0
+
+    for job in jobs:
+        refnr = job.get("refnr")
+        if not refnr:
+            continue
+        existing_supabase_job = dict(supabase_jobs.get(refnr) or {})
+        if existing_supabase_job.get("created_at"):
+            continue
+
+        location = job.get("arbeitsort", {}) or {}
+        created_at = first_seen_at.get(refnr) or dt.datetime.now(dt.timezone.utc).isoformat()
+        upsert_job_in_supabase(
+            supabase,
+            {
+                "refnr": refnr,
+                "job_id": existing_supabase_job.get("job_id"),
+                "date": job.get("aktuelleVeroeffentlichungsdatum"),
+                "keyword_score": existing_supabase_job.get("keyword_score"),
+                "ai_match_score": existing_supabase_job.get("ai_match_score"),
+                "title": job.get("titel"),
+                "employer": job.get("arbeitgeber"),
+                "city": location.get("ort"),
+                "reason": existing_supabase_job.get("reason"),
+                "job_url": build_job_page_url(refnr),
+                "cover_letter_path": existing_supabase_job.get("cover_letter_path"),
+                "job_description_path": existing_supabase_job.get("job_description_path"),
+                "cover_letter_text": existing_supabase_job.get("cover_letter_text"),
+                "job_description_text": existing_supabase_job.get("job_description_text"),
+                "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
+                "application_status": existing_supabase_job.get("application_status") or DEFAULT_APPLICATION_STATUS,
+                "application_result": existing_supabase_job.get("application_result") or "",
+                "note": existing_supabase_job.get("note") or "",
+                "created_at": created_at,
+                "updated_at": existing_supabase_job.get("updated_at") or dt.datetime.now().isoformat(),
+            },
+        )
+        existing_supabase_job.update(
+            {
+                "refnr": refnr,
+                "job_id": existing_supabase_job.get("job_id"),
+                "ai_match_score": existing_supabase_job.get("ai_match_score"),
+                "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
+                "cover_letter_text": existing_supabase_job.get("cover_letter_text"),
+                "application_status": existing_supabase_job.get("application_status") or DEFAULT_APPLICATION_STATUS,
+                "application_result": existing_supabase_job.get("application_result") or "",
+                "note": existing_supabase_job.get("note") or "",
+                "created_at": created_at,
+                "updated_at": existing_supabase_job.get("updated_at") or dt.datetime.now().isoformat(),
+                "reason": existing_supabase_job.get("reason"),
+                "cover_letter_path": existing_supabase_job.get("cover_letter_path"),
+                "job_description_path": existing_supabase_job.get("job_description_path"),
+                "job_description_text": existing_supabase_job.get("job_description_text"),
+            }
+        )
+        supabase_jobs[refnr] = existing_supabase_job
 
     for job in jobs:
         refnr = job.get("refnr")
@@ -824,10 +911,11 @@ def main():
         number += 1
         existing_supabase_job = dict(supabase_jobs.get(refnr) or {})
         job_id = existing_supabase_job.get("job_id")
-        if not job_id:
-            job_id = build_job_id(next_job_number, job.get("arbeitgeber"))
-            next_job_number += 1
-            existing_supabase_job["job_id"] = job_id
+        created_at = (
+            existing_supabase_job.get("created_at")
+            or first_seen_at.get(refnr)
+            or dt.datetime.now(dt.timezone.utc).isoformat()
+        )
 
         location = job.get("arbeitsort", {}) or {}
         city = location.get("ort")
@@ -862,6 +950,7 @@ def main():
                 "application_status": current_application_status,
                 "application_result": current_application_result,
                 "note": current_note,
+                "created_at": created_at,
                 "updated_at": dt.datetime.now().isoformat(),
             },
         )
@@ -875,13 +964,14 @@ def main():
                 "application_status": current_application_status,
                 "application_result": current_application_result,
                 "note": current_note,
+                "created_at": created_at,
             }
         )
         supabase_jobs[refnr] = existing_supabase_job
 
         print("-----------------------------------------------------------------------------\n")
         print(f"Job Refnr: {refnr}")
-        print(f"Job ID: {job_id}")
+        print(f"Job ID: {job_id or '—'}")
 
         print(f"{city}, {postal}, {location}")
         print(f"no. {number} | date: {posted} | score: {score}")
@@ -893,7 +983,7 @@ def main():
         if generated_count >= MAX_COVER_LETTERS:
             print("Reached cover letter limit for this run.")
             print_job_summary_table(
-                job_id,
+                job_id or "—",
                 job.get("arbeitgeber"),
                 job.get("titel"),
                 score,
@@ -905,7 +995,7 @@ def main():
         if not ai_available:
             print("AI cover letter generation is unavailable for this run.")
             print_job_summary_table(
-                job_id,
+                job_id or "—",
                 job.get("arbeitgeber"),
                 job.get("titel"),
                 score,
@@ -918,7 +1008,7 @@ def main():
             print("Job already has a generated cover letter in Supabase. Skipping AI scoring and generation.")
             skipped_existing_letters += 1
             print_job_summary_table(
-                job_id,
+                job_id or "—",
                 job.get("arbeitgeber"),
                 job.get("titel"),
                 score,
@@ -931,7 +1021,7 @@ def main():
             print("Job was already sent to AI in a previous run. Skipping AI scoring.")
             skipped_already_scored += 1
             print_job_summary_table(
-                job_id,
+                job_id or "—",
                 job.get("arbeitgeber"),
                 job.get("titel"),
                 score,
@@ -984,6 +1074,7 @@ def main():
                     "application_status": current_application_status,
                     "application_result": current_application_result,
                     "note": current_note,
+                    "created_at": created_at,
                     "updated_at": dt.datetime.now().isoformat(),
                 },
             )
@@ -996,6 +1087,7 @@ def main():
                 "application_status": current_application_status,
                 "application_result": current_application_result,
                 "note": current_note,
+                "created_at": created_at,
             }
             scored_refnrs.add(refnr)
             current_ai_match_score = ai_match_score
@@ -1006,7 +1098,7 @@ def main():
                     f"{ai_match_score}/10, below {MIN_AI_MATCH_SCORE}/10."
                 )
                 print_job_summary_table(
-                    job_id,
+                    job_id or "—",
                     job.get("arbeitgeber"),
                     job.get("titel"),
                     score,
@@ -1022,7 +1114,7 @@ def main():
             print("Disabling AI cover letter generation for the rest of this run.")
             ai_available = False
             print_job_summary_table(
-                job_id,
+                job_id or "—",
                 job.get("arbeitgeber"),
                 job.get("titel"),
                 score,
@@ -1033,7 +1125,7 @@ def main():
         except Exception as exc:
             print(f"Cover letter generation failed for '{refnr}': {exc}")
             print_job_summary_table(
-                job_id,
+                job_id or "—",
                 job.get("arbeitgeber"),
                 job.get("titel"),
                 score,
@@ -1084,9 +1176,15 @@ def main():
                 "application_status": current_application_status,
                 "application_result": current_application_result,
                 "note": current_note,
+                "created_at": created_at,
                 "updated_at": dt.datetime.now().isoformat(),
             },
         )
+        updated_job_ids = recompute_cover_letter_job_ids(supabase)
+        for existing_refnr, assigned_job_id in updated_job_ids.items():
+            if existing_refnr in supabase_jobs:
+                supabase_jobs[existing_refnr]["job_id"] = assigned_job_id
+        job_id = updated_job_ids.get(refnr, job_id)
         supabase_jobs[refnr] = {
             "refnr": refnr,
             "job_id": job_id,
@@ -1096,13 +1194,14 @@ def main():
             "application_status": current_application_status,
             "application_result": current_application_result,
             "note": current_note,
+            "created_at": created_at,
         }
 
         print(f"cover letter saved to: {output_path}")
         print(f"job description saved to: {description_path}")
         print(cover_letter)
         print_job_summary_table(
-            job_id,
+            job_id or "—",
             job.get("arbeitgeber"),
             job.get("titel"),
             score,
@@ -1121,4 +1220,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
