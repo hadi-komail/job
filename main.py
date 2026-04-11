@@ -52,8 +52,6 @@ MIN_SCORE_TO_PRINT = 2
 MAX_COVER_LETTERS = 10
 MIN_AI_MATCH_SCORE = 7
 CV_PATH = Path("about-ai.txt")
-OUTPUT_DIR = Path("letters")
-JOB_DESCRIPTION_DIR = Path("job_descriptions")
 TEMPLATE_PATH = Path("cover_letter_template.docx")
 OPENAI_MODEL = "gpt-5.4-mini"
 AI_SCORED_JOBS_PATH = Path("ai_scored_jobs.xlsx")
@@ -632,35 +630,9 @@ def fill_template_document(document, subject_text, body_text, employer_address):
                         style_table_paragraph(paragraph)
 
 
-def save_cover_letter(job_id, job, details, cover_letter):
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    employer = safe_slug(job.get("arbeitgeber", "employer"))
-    title = safe_slug(job.get("titel", "title"))
-    output_path = OUTPUT_DIR / f"hadi-komail-anschreibe-{job_id}.docx"
-    document = Document(TEMPLATE_PATH)
-    fill_template_document(
-        document,
-        f"Bewerbung als {job.get('titel', 'Stelle')}",
-        cover_letter,
-        extract_employer_address(job, details),
-    )
-    document.save(output_path)
-    return output_path
-
-
-def save_job_description(refnr, job, details, description, posted):
-    JOB_DESCRIPTION_DIR.mkdir(exist_ok=True)
-    employer = safe_slug(job.get("arbeitgeber", "employer"))
-    title = safe_slug(job.get("titel", "title"))
-    output_path = JOB_DESCRIPTION_DIR / f"{refnr}_{employer}_{title}.docx"
-
+def build_job_description_text(refnr, job, details, description, posted):
     location = job.get("arbeitsort", {}) or {}
     address = extract_employer_address(job, details)
-
-    document = Document()
-    heading = document.add_heading(job.get("titel", "Job Description"), level=1)
-    style_paragraph(heading, space_after_pt=LETTER_SPACE_AFTER_PT)
-
     metadata_lines = [
         f"Referenznummer: {refnr}",
         f"Arbeitgeber: {job.get('arbeitgeber') or 'Unbekannt'}",
@@ -675,21 +647,13 @@ def save_job_description(refnr, job, details, description, posted):
     if address.get("city_line"):
         metadata_lines.append(f"Adresse 2: {address['city_line']}")
 
-    for line in metadata_lines:
-        paragraph = document.add_paragraph(line)
-        style_paragraph(paragraph, space_after_pt=LETTER_SPACE_AFTER_PT)
-
-    document.add_paragraph("")
+    lines = list(metadata_lines)
     body_paragraphs = [part.strip() for part in (description or "").split("\n\n") if part.strip()]
     if not body_paragraphs:
         body_paragraphs = ["Keine Stellenbeschreibung verfügbar."]
 
-    for part in body_paragraphs:
-        paragraph = document.add_paragraph(part)
-        style_paragraph(paragraph, space_after_pt=LETTER_SPACE_AFTER_PT)
-
-    document.save(output_path)
-    return output_path
+    lines.extend(body_paragraphs)
+    return "\n\n".join(lines)
 
 
 def ensure_workbook(path, headers):
@@ -1134,8 +1098,6 @@ def main():
             )
             continue
 
-        output_path = save_cover_letter(job_id, job, details, cover_letter)
-        description_path = save_job_description(refnr, job, details, description, posted)
         generated_count += 1
 
         if refnr not in written_refnrs:
@@ -1150,7 +1112,7 @@ def main():
                     job.get("arbeitgeber"),
                     city,
                     build_job_page_url(refnr),
-                    str(output_path),
+                    "",
                 ],
             )
             written_refnrs.add(refnr)
@@ -1168,8 +1130,8 @@ def main():
                 "city": city,
                 "reason": summarize_match_reason(ai_match_summary),
                 "job_url": build_job_page_url(refnr),
-                "cover_letter_path": str(output_path).replace("\\", "/"),
-                "job_description_path": str(description_path).replace("\\", "/"),
+                "cover_letter_path": None,
+                "job_description_path": None,
                 "cover_letter_text": cover_letter,
                 "job_description_text": description or "",
                 "has_cover_letter": True,
