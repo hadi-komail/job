@@ -378,7 +378,7 @@ def recompute_cover_letter_job_ids(client):
         return {}
 
     response = client.table(SUPABASE_TABLE).select(
-        "refnr,employer,created_at,has_cover_letter,cover_letter_text"
+        "refnr,job_id,employer,created_at,has_cover_letter,cover_letter_text"
     ).execute()
     rows = response.data or []
     covered_rows = [
@@ -392,6 +392,13 @@ def recompute_cover_letter_job_ids(client):
             str(row.get("refnr") or ""),
         )
     )
+
+    # Clear first so the unique partial index on job_id cannot reject temporary
+    # collisions while rows are being renumbered one by one.
+    for row in rows:
+        refnr = str(row.get("refnr") or "").strip()
+        if refnr and row.get("job_id"):
+            client.table(SUPABASE_TABLE).update({"job_id": None}).eq("refnr", refnr).execute()
 
     updated_ids = {}
     for index, row in enumerate(covered_rows, start=1):
