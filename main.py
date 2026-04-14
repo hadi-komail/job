@@ -1159,7 +1159,6 @@ def main():
             "created_at": created_at,
         }
 
-        print(f"cover letter saved to: {output_path}")
         print(f"job description saved to: {description_path}")
         print(cover_letter)
         print_job_summary_table(
