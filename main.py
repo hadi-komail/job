@@ -1,5 +1,6 @@
 import base64
 import datetime as dt
+import json
 import os
 import time
 import subprocess
@@ -63,6 +64,7 @@ LETTER_TEXT_COLOR = RGBColor(29, 39, 49)
 LETTER_LINE_SPACING = 1.5
 SUPABASE_TABLE = "jobs"
 DEFAULT_APPLICATION_STATUS = "not_applied"
+SEARCH_TERMS_PATH = Path("search_terms.json")
 
 
 def encode_refnr(refnr):
@@ -314,7 +316,7 @@ def load_existing_jobs_from_supabase(client):
         return {}
 
     response = client.table(SUPABASE_TABLE).select(
-        "refnr,job_id,ai_match_score,has_cover_letter,cover_letter_text,application_status,application_result,note,created_at,updated_at,reason,cover_letter_path,job_description_path,job_description_text"
+        "refnr,job_id,ai_match_score,has_cover_letter,cover_letter_text,application_status,application_method,application_result,applied_at,note,created_at,updated_at,reason,cover_letter_path,job_description_path,job_description_text,employer_street,employer_postal_code,employer_city"
     ).execute()
     rows = response.data or []
 
@@ -595,8 +597,44 @@ def extract_employer_address(job, details):
     return {
         "employer": employer,
         "street_line": street,
+        "postal_code": address.get("plz") or "",
+        "address_city": address.get("ort") or "",
         "city_line": city_line,
     }
+
+
+def load_search_terms():
+    default_terms = [
+        "Türkisch",
+        "Migration",
+        "Geflüchtete",
+        "Sociology",
+        "Integration",
+        "Farsi",
+        "Sozialbetreuer",
+        "Persisch",
+        "Soziologie",
+        "Internationale Beziehungen",
+        "Sozialwissenschaftler",
+        "Flüchtlinge",
+        "Mehrsprachigkeit",
+        "Zuwanderer",
+    ]
+    raw_env = os.environ.get("SEARCH_TERMS", "").strip()
+    if raw_env:
+        terms = [term.strip() for term in raw_env.replace(";", "\n").replace(",", "\n").splitlines()]
+        return [term for term in terms if term]
+    if SEARCH_TERMS_PATH.exists():
+        try:
+            data = json.loads(SEARCH_TERMS_PATH.read_text(encoding="utf-8"))
+            raw_terms = data.get("terms", data) if isinstance(data, dict) else data
+            terms = [str(term).strip() for term in raw_terms]
+            terms = [term for term in terms if term]
+            if terms:
+                return terms
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    return default_terms
 
 
 def fill_template_document(document, subject_text, body_text, employer_address):
@@ -765,6 +803,8 @@ def main():
         "Zuwanderer",
     ]
 
+    search_terms = load_search_terms()
+
     all_jobs = []
     job_terms = {}
     first_seen_at = {}
@@ -896,9 +936,12 @@ def main():
         current_application_status = (
             existing_supabase_job.get("application_status") or DEFAULT_APPLICATION_STATUS
         )
+        current_application_method = existing_supabase_job.get("application_method") or ""
         current_application_result = existing_supabase_job.get("application_result") or ""
+        current_applied_at = existing_supabase_job.get("applied_at")
         current_note = existing_supabase_job.get("note") or ""
         current_ai_match_score = existing_supabase_job.get("ai_match_score")
+        employer_address = extract_employer_address(job, details)
 
         upsert_job_in_supabase(
             supabase,
@@ -911,6 +954,9 @@ def main():
                 "title": job.get("titel"),
                 "employer": job.get("arbeitgeber"),
                 "city": city,
+                "employer_street": employer_address.get("street_line"),
+                "employer_postal_code": employer_address.get("postal_code") or postal,
+                "employer_city": employer_address.get("address_city") or city,
                 "reason": existing_supabase_job.get("reason"),
                 "job_url": build_job_page_url(refnr),
                 "cover_letter_path": existing_supabase_job.get("cover_letter_path"),
@@ -919,7 +965,9 @@ def main():
                 "job_description_text": existing_supabase_job.get("job_description_text"),
                 "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
                 "application_status": current_application_status,
+                "application_method": current_application_method,
                 "application_result": current_application_result,
+                "applied_at": current_applied_at,
                 "note": current_note,
                 "created_at": created_at,
                 "updated_at": dt.datetime.now().isoformat(),
@@ -1035,6 +1083,9 @@ def main():
                     "title": job.get("titel"),
                     "employer": job.get("arbeitgeber"),
                     "city": city,
+                    "employer_street": employer_address.get("street_line"),
+                    "employer_postal_code": employer_address.get("postal_code") or postal,
+                    "employer_city": employer_address.get("address_city") or city,
                     "reason": summarize_match_reason(ai_match_summary),
                     "job_url": build_job_page_url(refnr),
                     "cover_letter_path": None,
@@ -1043,7 +1094,9 @@ def main():
                     "job_description_text": None,
                     "has_cover_letter": False,
                     "application_status": current_application_status,
+                    "application_method": current_application_method,
                     "application_result": current_application_result,
+                    "applied_at": current_applied_at,
                     "note": current_note,
                     "created_at": created_at,
                     "updated_at": dt.datetime.now().isoformat(),
@@ -1135,6 +1188,9 @@ def main():
                 "title": job.get("titel"),
                 "employer": job.get("arbeitgeber"),
                 "city": city,
+                "employer_street": employer_address.get("street_line"),
+                "employer_postal_code": employer_address.get("postal_code") or postal,
+                "employer_city": employer_address.get("address_city") or city,
                 "reason": summarize_match_reason(ai_match_summary),
                 "job_url": build_job_page_url(refnr),
                 "cover_letter_path": None,
@@ -1143,7 +1199,9 @@ def main():
                 "job_description_text": description or "",
                 "has_cover_letter": True,
                 "application_status": current_application_status,
+                "application_method": current_application_method,
                 "application_result": current_application_result,
+                "applied_at": current_applied_at,
                 "note": current_note,
                 "created_at": created_at,
                 "updated_at": dt.datetime.now().isoformat(),
