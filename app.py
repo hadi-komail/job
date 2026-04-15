@@ -851,6 +851,12 @@ def logs():
     )
 
 
+@app.get("/api/logs")
+def api_logs():
+    content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    return app.response_class(content, mimetype="text/plain; charset=utf-8")
+
+
 @app.get("/api/search-terms")
 def get_search_terms():
     return jsonify({"terms": load_search_terms(), "text": "\n".join(load_search_terms())})
