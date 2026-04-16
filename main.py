@@ -308,7 +308,7 @@ def get_supabase_client():
 def upsert_job_in_supabase(client, payload):
     if client is None:
         return
-    client.table(SUPABASE_TABLE).upsert(payload).execute()
+    client.table(SUPABASE_TABLE).upsert(payload, on_conflict="refnr").execute()
 
 
 def load_existing_jobs_from_supabase(client):
@@ -375,43 +375,34 @@ def print_job_summary_table(job_id, employer, title, keyword_score, ai_match_sco
     )
 
 
-def recompute_cover_letter_job_ids(client):
+def next_cover_letter_job_id_number(client):
     if client is None:
-        return {}
+        return None
 
     response = client.table(SUPABASE_TABLE).select(
-        "refnr,job_id,employer,created_at,has_cover_letter,cover_letter_text"
+        "job_id"
     ).execute()
     rows = response.data or []
-    covered_rows = [
-        row
-        for row in rows
-        if row.get("has_cover_letter") or row.get("cover_letter_text")
+    used_numbers = [
+        number
+        for number in (parse_job_id_number(row.get("job_id")) for row in rows)
+        if number is not None
     ]
-    covered_rows.sort(
-        key=lambda row: (
-            str(row.get("created_at") or ""),
-            str(row.get("refnr") or ""),
-        )
-    )
+    return (max(used_numbers) + 1) if used_numbers else 1
 
-    # Clear first so the unique partial index on job_id cannot reject temporary
-    # collisions while rows are being renumbered one by one.
-    for row in rows:
-        refnr = str(row.get("refnr") or "").strip()
-        if refnr and row.get("job_id"):
-            client.table(SUPABASE_TABLE).update({"job_id": None}).eq("refnr", refnr).execute()
 
-    updated_ids = {}
-    for index, row in enumerate(covered_rows, start=1):
-        refnr = str(row.get("refnr") or "").strip()
-        if not refnr:
-            continue
-        job_id = build_job_id(index, row.get("employer"))
-        client.table(SUPABASE_TABLE).update({"job_id": job_id}).eq("refnr", refnr).execute()
-        updated_ids[refnr] = job_id
+def assign_job_id_if_missing(client, refnr, employer, current_job_id):
+    existing_job_id = str(current_job_id or "").strip()
+    if existing_job_id:
+        return existing_job_id
+    if client is None:
+        return None
 
-    return updated_ids
+    next_number = next_cover_letter_job_id_number(client)
+    if next_number is None:
+        return None
+
+    return build_job_id(next_number, employer)
 
 
 def build_cover_letter_prompt(cv_text, job, description):
@@ -1177,6 +1168,13 @@ def main():
             )
             written_refnrs.add(refnr)
 
+        job_id = assign_job_id_if_missing(
+            supabase,
+            refnr,
+            job.get("arbeitgeber"),
+            job_id,
+        )
+
         upsert_job_in_supabase(
             supabase,
             {
@@ -1207,11 +1205,6 @@ def main():
                 "updated_at": dt.datetime.now().isoformat(),
             },
         )
-        updated_job_ids = recompute_cover_letter_job_ids(supabase)
-        for existing_refnr, assigned_job_id in updated_job_ids.items():
-            if existing_refnr in supabase_jobs:
-                supabase_jobs[existing_refnr]["job_id"] = assigned_job_id
-        job_id = updated_job_ids.get(refnr, job_id)
         supabase_jobs[refnr] = {
             "refnr": refnr,
             "job_id": job_id,
