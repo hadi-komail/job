@@ -125,6 +125,28 @@ def refresh_run_state():
     current_process = None
 
 
+def clean_log_content(content):
+    noisy_fragments = (
+        "Serving Flask app",
+        "Debug mode:",
+        "WARNING: This is a development server",
+        "Running on http://",
+        "Press CTRL+C to quit",
+        "Restarting with stat",
+        "Debugger is active",
+        "Debugger PIN:",
+        '"HEAD / HTTP/1.1"',
+        '"GET / HTTP/1.1"',
+    )
+    cleaned_lines = []
+    for line in content.splitlines():
+        if any(fragment in line for fragment in noisy_fragments):
+            continue
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines).strip()
+    return cleaned or "No job-search logs yet. Run the search first."
+
+
 def get_supabase_client():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_ANON_KEY")
@@ -780,27 +802,56 @@ def run_script():
     if is_running():
         return redirect(url_for("dashboard"))
 
+    start_search_process()
+    return redirect(url_for("dashboard"))
+
+
+def start_search_process():
+    global current_process
+
     log_handle = open(LOG_FILE, "w", encoding="utf-8")
+    log_handle.write("Starting job search...\n")
+    log_handle.flush()
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    current_process = subprocess.Popen(
-        [sys.executable, "-u", str(BASE_DIR / "main.py")],
-        cwd=BASE_DIR,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env=env,
-    )
-    save_run_state("running")
-    return redirect(url_for("dashboard"))
+    try:
+        current_process = subprocess.Popen(
+            [sys.executable, "-u", str(BASE_DIR / "main.py")],
+            cwd=BASE_DIR,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
+        save_run_state("running")
+        return True, None
+    except Exception as exc:
+        log_handle.write(f"Failed to start job search: {exc}\n")
+        log_handle.close()
+        save_run_state("failed", returncode=-1)
+        current_process = None
+        return False, str(exc)
+
+
+@app.post("/api/run")
+@app.get("/api/run")
+def api_run_script():
+    if is_running():
+        return jsonify({"started": False, "status": "already_running"})
+
+    started, error = start_search_process()
+    if not started:
+        return jsonify({"started": False, "status": "failed", "error": error}), 500
+    return jsonify({"started": True, "status": "running"})
 
 
 @app.get("/logs")
 def logs():
     running = is_running()
     run_state = load_run_state()
-    content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    raw_content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    content = clean_log_content(raw_content)
     return render_template_string(
         """
         <!doctype html>
@@ -853,7 +904,8 @@ def logs():
 
 @app.get("/api/logs")
 def api_logs():
-    content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    raw_content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    content = clean_log_content(raw_content)
     return app.response_class(content, mimetype="text/plain; charset=utf-8")
 
 
@@ -1014,4 +1066,4 @@ def download_cover_letter(job_ai):
     )
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
