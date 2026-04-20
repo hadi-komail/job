@@ -329,6 +329,22 @@ def load_existing_jobs_from_supabase(client):
     return existing
 
 
+def has_ai_match_score(row):
+    value = row.get("ai_match_score") if row else None
+    return value is not None and str(value).strip() != ""
+
+
+def has_keyword_score(row):
+    value = row.get("keyword_score") if row else None
+    return value is not None and str(value).strip() != ""
+
+
+def has_generated_cover_letter(row):
+    if not row:
+        return False
+    return bool(row.get("has_cover_letter") or row.get("cover_letter_text"))
+
+
 def parse_job_id_number(job_id):
     raw = str(job_id or "").strip()
     if not raw or "-" not in raw:
@@ -766,12 +782,12 @@ def main():
     supabase_scored_refnrs = {
         refnr
         for refnr, row in supabase_jobs.items()
-        if row.get("ai_match_score") is not None
+        if has_ai_match_score(row)
     }
     supabase_written_refnrs = {
         refnr
         for refnr, row in supabase_jobs.items()
-        if row.get("has_cover_letter") or row.get("cover_letter_text")
+        if has_generated_cover_letter(row)
     }
 
     scored_refnrs |= supabase_scored_refnrs
@@ -886,6 +902,19 @@ def main():
 
     for job in jobs:
         refnr = job.get("refnr")
+        if not refnr:
+            continue
+        existing_supabase_job = supabase_jobs.get(refnr) or {}
+        if has_generated_cover_letter(existing_supabase_job):
+            skipped_existing_letters += 1
+            continue
+        if (
+            refnr in scored_refnrs
+            or has_ai_match_score(existing_supabase_job)
+            or has_keyword_score(existing_supabase_job)
+        ):
+            skipped_already_scored += 1
+            continue
         try:
             details = get_job_details(refnr)
         except requests.RequestException as exc:
@@ -1004,32 +1033,6 @@ def main():
 
         if not ai_available:
             print("AI cover letter generation is unavailable for this run.")
-            print_job_summary_table(
-                job_id or "—",
-                job.get("arbeitgeber"),
-                job.get("titel"),
-                score,
-                current_ai_match_score,
-                search_term_text,
-            )
-            continue
-
-        if existing_supabase_job.get("has_cover_letter") or existing_supabase_job.get("cover_letter_text"):
-            print("Job already has a generated cover letter in Supabase. Skipping AI scoring and generation.")
-            skipped_existing_letters += 1
-            print_job_summary_table(
-                job_id or "—",
-                job.get("arbeitgeber"),
-                job.get("titel"),
-                score,
-                current_ai_match_score,
-                search_term_text,
-            )
-            continue
-
-        if refnr in scored_refnrs:
-            print("Job was already sent to AI in a previous run. Skipping AI scoring.")
-            skipped_already_scored += 1
             print_job_summary_table(
                 job_id or "—",
                 job.get("arbeitgeber"),
@@ -1231,7 +1234,7 @@ def main():
     print(f"Raw search hits collected: {len(all_jobs)}")
     print(f"Unique jobs after deduplication: {len(jobs)}")
     print(f"Jobs passing local score threshold: {number}")
-    print(f"Jobs skipped because already AI-scored: {skipped_already_scored}")
+    print(f"Jobs skipped because already detail-called/scored: {skipped_already_scored}")
     print(f"Jobs skipped because a cover letter already exists: {skipped_existing_letters}")
     print(f"New cover letters generated in this run: {generated_count}")
 
