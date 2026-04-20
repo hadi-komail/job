@@ -166,6 +166,13 @@ def rel_download_path(path):
     return str(path.relative_to(BASE_DIR)).replace("\\", "/")
 
 
+def date_only(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text[:10]
+
+
 def load_jobs():
     client = get_supabase_client()
     if client is None:
@@ -954,7 +961,7 @@ def download_applications_summary():
                 job.get("employer_postal_code", ""),
                 job.get("employer_city") or job.get("city", ""),
                 job.get("title", ""),
-                job.get("applied_at") or job.get("updated_at") or "",
+                date_only(job.get("date")),
                 job.get("application_method", ""),
                 job.get("application_result", ""),
             ]
