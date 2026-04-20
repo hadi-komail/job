@@ -316,7 +316,7 @@ def load_existing_jobs_from_supabase(client):
         return {}
 
     response = client.table(SUPABASE_TABLE).select(
-        "refnr,job_id,ai_match_score,has_cover_letter,cover_letter_text,application_status,application_method,application_result,applied_at,note,created_at,updated_at,reason,cover_letter_path,job_description_path,job_description_text,employer_street,employer_postal_code,employer_city"
+        "refnr,job_id,date,keyword_score,ai_match_score,title,employer,city,reason,job_url,has_cover_letter,cover_letter_text,application_status,application_method,application_result,applied_at,note,created_at,updated_at,cover_letter_path,job_description_path,job_description_text,employer_street,employer_postal_code,employer_city"
     ).execute()
     rows = response.data or []
 
@@ -337,6 +337,15 @@ def has_ai_match_score(row):
 def has_keyword_score(row):
     value = row.get("keyword_score") if row else None
     return value is not None and str(value).strip() != ""
+
+
+def numeric_score(value):
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def has_generated_cover_letter(row):
@@ -908,21 +917,27 @@ def main():
         if has_generated_cover_letter(existing_supabase_job):
             skipped_existing_letters += 1
             continue
-        if (
-            refnr in scored_refnrs
-            or has_ai_match_score(existing_supabase_job)
-            or has_keyword_score(existing_supabase_job)
-        ):
+
+        existing_ai_score = numeric_score(existing_supabase_job.get("ai_match_score"))
+        existing_keyword_score = numeric_score(existing_supabase_job.get("keyword_score"))
+        if existing_ai_score is not None and existing_ai_score < MIN_AI_MATCH_SCORE:
             skipped_already_scored += 1
             continue
-        try:
-            details = get_job_details(refnr)
-        except requests.RequestException as exc:
-            print(f"Details failed for '{refnr}': {exc}")
+        if refnr in scored_refnrs and existing_ai_score is None:
+            skipped_already_scored += 1
             continue
 
-        description = details.get("stellenangebotsBeschreibung")
-        score = score_job(job, description)
+        description = existing_supabase_job.get("job_description_text") or ""
+        details = {}
+        if not description:
+            try:
+                details = get_job_details(refnr)
+            except requests.RequestException as exc:
+                print(f"Details failed for '{refnr}': {exc}")
+                continue
+            description = details.get("stellenangebotsBeschreibung")
+
+        score = int(existing_keyword_score) if existing_keyword_score is not None else score_job(job, description)
         posted = job.get("aktuelleVeroeffentlichungsdatum")
         scored_jobs.append((posted, score, job, description, refnr, details))
 
@@ -961,7 +976,14 @@ def main():
         current_applied_at = existing_supabase_job.get("applied_at")
         current_note = existing_supabase_job.get("note") or ""
         current_ai_match_score = existing_supabase_job.get("ai_match_score")
+        existing_ai_match_score = numeric_score(current_ai_match_score)
         employer_address = extract_employer_address(job, details)
+        if not employer_address.get("street_line"):
+            employer_address["street_line"] = existing_supabase_job.get("employer_street") or ""
+        if not employer_address.get("postal_code"):
+            employer_address["postal_code"] = existing_supabase_job.get("employer_postal_code") or ""
+        if not employer_address.get("address_city"):
+            employer_address["address_city"] = existing_supabase_job.get("employer_city") or ""
 
         upsert_job_in_supabase(
             supabase,
@@ -982,7 +1004,7 @@ def main():
                 "cover_letter_path": existing_supabase_job.get("cover_letter_path"),
                 "job_description_path": existing_supabase_job.get("job_description_path"),
                 "cover_letter_text": existing_supabase_job.get("cover_letter_text"),
-                "job_description_text": existing_supabase_job.get("job_description_text"),
+                "job_description_text": description or existing_supabase_job.get("job_description_text") or "",
                 "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
                 "application_status": current_application_status,
                 "application_method": current_application_method,
@@ -998,8 +1020,10 @@ def main():
                 "refnr": refnr,
                 "job_id": job_id,
                 "ai_match_score": current_ai_match_score,
+                "keyword_score": score,
                 "has_cover_letter": bool(existing_supabase_job.get("has_cover_letter")),
                 "cover_letter_text": existing_supabase_job.get("cover_letter_text"),
+                "job_description_text": description or existing_supabase_job.get("job_description_text") or "",
                 "application_status": current_application_status,
                 "application_result": current_application_result,
                 "note": current_note,
@@ -1044,71 +1068,83 @@ def main():
             continue
 
         try:
-            print("Assessing profile match...")
-            ai_match_score, ai_match_summary = assess_job_match(
-                client,
-                cv_text,
-                job,
-                description,
-            )
-            print(ai_match_summary)
+            if existing_ai_match_score is not None:
+                ai_match_score = existing_ai_match_score
+                ai_match_summary = existing_supabase_job.get("reason") or (
+                    f"MATCH_SCORE: {ai_match_score:g}/10\n"
+                    "REASON: Existing AI match score reused from a previous run."
+                )
+                print("Reusing existing AI match score; generating missing cover letter.")
+                print(ai_match_summary)
+                current_ai_match_score = ai_match_score
+            else:
+                print("Assessing profile match...")
+                ai_match_score, ai_match_summary = assess_job_match(
+                    client,
+                    cv_text,
+                    job,
+                    description,
+                )
+                print(ai_match_summary)
 
-            append_row_to_workbook(
-                AI_SCORED_JOBS_PATH,
-                [
-                    refnr,
-                    posted,
-                    score,
-                    ai_match_score,
-                    job.get("titel"),
-                    job.get("arbeitgeber"),
-                    city,
-                    summarize_match_reason(ai_match_summary),
-                ],
-            )
-            upsert_job_in_supabase(
-                supabase,
-                {
+                append_row_to_workbook(
+                    AI_SCORED_JOBS_PATH,
+                    [
+                        refnr,
+                        posted,
+                        score,
+                        ai_match_score,
+                        job.get("titel"),
+                        job.get("arbeitgeber"),
+                        city,
+                        summarize_match_reason(ai_match_summary),
+                    ],
+                )
+                upsert_job_in_supabase(
+                    supabase,
+                    {
+                        "refnr": refnr,
+                        "job_id": job_id,
+                        "date": posted,
+                        "keyword_score": score,
+                        "ai_match_score": ai_match_score,
+                        "title": job.get("titel"),
+                        "employer": job.get("arbeitgeber"),
+                        "city": city,
+                        "employer_street": employer_address.get("street_line"),
+                        "employer_postal_code": employer_address.get("postal_code") or postal,
+                        "employer_city": employer_address.get("address_city") or city,
+                        "reason": summarize_match_reason(ai_match_summary),
+                        "job_url": build_job_page_url(refnr),
+                        "cover_letter_path": None,
+                        "job_description_path": None,
+                        "cover_letter_text": None,
+                        "job_description_text": description or "",
+                        "has_cover_letter": False,
+                        "application_status": current_application_status,
+                        "application_method": current_application_method,
+                        "application_result": current_application_result,
+                        "applied_at": current_applied_at,
+                        "note": current_note,
+                        "created_at": created_at,
+                        "updated_at": dt.datetime.now().isoformat(),
+                    },
+                )
+                supabase_jobs[refnr] = {
                     "refnr": refnr,
                     "job_id": job_id,
-                    "date": posted,
                     "keyword_score": score,
                     "ai_match_score": ai_match_score,
-                    "title": job.get("titel"),
-                    "employer": job.get("arbeitgeber"),
-                    "city": city,
-                    "employer_street": employer_address.get("street_line"),
-                    "employer_postal_code": employer_address.get("postal_code") or postal,
-                    "employer_city": employer_address.get("address_city") or city,
-                    "reason": summarize_match_reason(ai_match_summary),
-                    "job_url": build_job_page_url(refnr),
-                    "cover_letter_path": None,
-                    "job_description_path": None,
-                    "cover_letter_text": None,
-                    "job_description_text": None,
                     "has_cover_letter": False,
+                    "cover_letter_text": None,
+                    "job_description_text": description or "",
                     "application_status": current_application_status,
-                    "application_method": current_application_method,
                     "application_result": current_application_result,
-                    "applied_at": current_applied_at,
                     "note": current_note,
                     "created_at": created_at,
-                    "updated_at": dt.datetime.now().isoformat(),
-                },
-            )
-            supabase_jobs[refnr] = {
-                "refnr": refnr,
-                "job_id": job_id,
-                "ai_match_score": ai_match_score,
-                "has_cover_letter": False,
-                "cover_letter_text": None,
-                "application_status": current_application_status,
-                "application_result": current_application_result,
-                "note": current_note,
-                "created_at": created_at,
-            }
-            scored_refnrs.add(refnr)
-            current_ai_match_score = ai_match_score
+                }
+                scored_refnrs.add(refnr)
+                current_ai_match_score = ai_match_score
 
             if ai_match_score < MIN_AI_MATCH_SCORE:
                 print(
