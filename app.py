@@ -32,6 +32,7 @@ LETTER_FONT_SIZE = 9
 LETTER_SPACE_AFTER_PT = 6
 LETTER_TEXT_COLOR = RGBColor(29, 39, 49)
 LETTER_LINE_SPACING = 1.5
+# UI theme tokens are centralized so all pages share one consistent look.
 
 current_process = None
 
@@ -135,6 +136,19 @@ def refresh_run_state():
         return
     save_run_state("completed" if returncode == 0 else "failed", returncode=returncode)
     current_process = None
+
+
+def display_run_status(running, raw_status):
+    if running:
+        return "Läuft"
+    mapping = {
+        "idle": "Bereit",
+        "completed": "Abgeschlossen",
+        "failed": "Fehlgeschlagen",
+        "running": "Läuft",
+    }
+    key = str(raw_status or "").strip().lower()
+    return mapping.get(key, "Bereit")
 
 
 def clean_log_content(content):
@@ -848,7 +862,7 @@ def render_jobs_page(page_title, page_key):
     jobs = filter_jobs_for_page(load_jobs(), page_key)
     running = is_running()
     run_state = load_run_state()
-    status = "Läuft" if running else run_state.get("status", "idle").title()
+    status = display_run_status(running, run_state.get("status", "idle"))
     return render_template_string(
         """
         <!doctype html>
@@ -858,173 +872,358 @@ def render_jobs_page(page_title, page_key):
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>{{ page_title }}</title>
           <style>
-            :root {
-              --bg-0:#05070d;
-              --bg-1:#0a1021;
-              --bg-2:#111a34;
-              --panel:#111b35;
-              --panel-2:#0d1530;
-              --line:#2b3c64;
-              --ink:#edf3ff;
-              --muted:#9cb0d8;
-              --primary:#56a4ff;
-              --primary-2:#7a6dff;
-              --ok:#4ad192;
-              --warn:#ffc863;
-              --radius:18px;
-              --shadow:0 18px 42px rgba(4,7,16,.5);
+            :root{
+              --bg:#060b1a;
+              --bg-soft:#0d1428;
+              --surface:#111a31;
+              --surface-2:#131f3b;
+              --card:#182443;
+              --card-2:#15213d;
+              --line:#24385f;
+              --line-soft:#1d2d4e;
+              --text:#edf4ff;
+              --muted:#9ab0d3;
+              --aqua:#2dc7e7;
+              --blue:#4b7eff;
+              --green:#45cf98;
+              --amber:#f2c060;
+              --shadow:0 18px 42px rgba(3,7,17,.58);
             }
             *{box-sizing:border-box}
             body{
               margin:0;
-              color:var(--ink);
+              color:var(--text);
               font-family:"Aptos","Segoe UI",Arial,sans-serif;
               background:
-                radial-gradient(1100px 600px at 100% -8%, rgba(122,109,255,.22), transparent 60%),
-                radial-gradient(900px 520px at -8% 24%, rgba(86,164,255,.18), transparent 58%),
-                linear-gradient(180deg,var(--bg-0),var(--bg-1) 35%,var(--bg-2));
+                radial-gradient(1100px 620px at 110% -8%, rgba(75,126,255,.24), transparent 56%),
+                radial-gradient(980px 560px at -8% 18%, rgba(45,199,231,.16), transparent 58%),
+                linear-gradient(180deg,var(--bg),var(--bg-soft));
             }
-            .shell{max-width:1360px;margin:0 auto;padding:18px 16px 34px}
-            .topbar{
-              position:sticky;top:0;z-index:40;background:rgba(5,7,13,.86);backdrop-filter:blur(10px);
-              border-bottom:1px solid rgba(156,176,216,.2);margin:-18px -16px 14px;padding:14px 16px 12px;
+            .shell{
+              max-width:1360px;
+              margin:24px auto;
+              padding:0 14px 28px;
             }
-            .nav{display:flex;gap:8px;flex-wrap:wrap}
-            .nav a{
-              padding:10px 14px;border-radius:11px;border:1px solid rgba(156,176,216,.3);text-decoration:none;
-              color:var(--ink);background:rgba(17,27,53,.86);font-weight:700;font-size:13px;letter-spacing:.02em;
-            }
-            .nav a.active{background:linear-gradient(135deg,var(--primary),var(--primary-2));border-color:transparent;color:#fff}
-            .hero{
-              display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
-              background:linear-gradient(145deg,#15264d,#0f1733 64%);
-              border:1px solid rgba(156,176,216,.28);
-              border-radius:22px;
-              padding:18px;
+            .board{
+              border:1px solid var(--line);
+              border-radius:24px;
+              overflow:hidden;
+              background:linear-gradient(180deg,var(--surface),var(--surface-2));
               box-shadow:var(--shadow);
             }
-            .hero h1{margin:0 0 6px;font-size:30px;letter-spacing:-.02em}
-            .hero p{margin:0;color:var(--muted);font-size:14px}
-            .status{padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.04em}
-            .status.ok{background:rgba(74,209,146,.16);color:var(--ok);border:1px solid rgba(74,209,146,.38)}
-            .status.warn{background:rgba(255,200,99,.16);color:var(--warn);border:1px solid rgba(255,200,99,.38)}
-            .stats{margin-top:12px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-            .metric{background:rgba(17,27,53,.75);border:1px solid rgba(156,176,216,.26);border-radius:14px;padding:12px}
-            .metric .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-            .metric .v{font-size:22px;font-weight:800;margin-top:6px}
-            .cards{display:grid;gap:12px;margin-top:14px}
-            details.card{
-              border:1px solid rgba(156,176,216,.26);border-radius:18px;overflow:hidden;
-              background:linear-gradient(180deg,var(--panel),var(--panel-2));box-shadow:var(--shadow);
+            .topbar{
+              display:flex;
+              align-items:center;
+              justify-content:space-between;
+              gap:18px;
+              padding:16px 20px;
+              border-bottom:1px solid var(--line-soft);
+              background:rgba(10,16,33,.82);
             }
-            details > summary{list-style:none;cursor:pointer;padding:14px 16px}
-            details > summary::-webkit-details-marker{display:none}
-            .sum{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
-            .ttl{font-size:18px;font-weight:800;line-height:1.3}
-            .sub{color:var(--muted);font-size:12px;margin-top:4px}
-            .chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-            .chip{border:1px solid rgba(156,176,216,.32);background:rgba(9,13,27,.38);border-radius:999px;padding:4px 8px;font-size:11px;font-weight:700;color:#d8e4ff}
-            .body{border-top:1px solid rgba(156,176,216,.24);padding:14px 16px 16px;display:grid;grid-template-columns:1.12fr .88fr;gap:12px}
-            .panel{border:1px solid rgba(156,176,216,.25);background:rgba(9,13,27,.32);border-radius:14px;padding:12px}
-            .panel h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#b5c7ea}
-            .txt{color:#c8d6f4;font-size:13px;line-height:1.55}
-            .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-            .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;text-decoration:none;font-size:12px;font-weight:800;letter-spacing:.03em;cursor:pointer}
-            .btn.secondary{background:rgba(17,27,53,.82);border-color:rgba(156,176,216,.36);color:#dbe6ff}
-            form{display:grid;gap:8px}
-            label{font-size:12px;font-weight:700;color:#b8c8ea}
-            select,input,textarea{width:100%;border-radius:10px;border:1px solid rgba(156,176,216,.38);padding:10px 11px;background:rgba(8,12,25,.5);color:var(--ink);font:inherit}
-            textarea{min-height:86px;resize:vertical}
-            .empty{border:1px dashed rgba(156,176,216,.36);background:rgba(17,27,53,.5);border-radius:14px;padding:30px;text-align:center;color:var(--muted)}
+            .brand{display:flex;align-items:center;gap:10px}
+            .brand-dot{
+              width:28px;height:28px;border-radius:8px;
+              background:linear-gradient(145deg,var(--aqua),var(--blue));
+              box-shadow:0 8px 22px rgba(75,126,255,.42);
+            }
+            .brand-name{font-size:17px;font-weight:800;letter-spacing:.02em}
+            .nav{display:flex;gap:6px;flex-wrap:wrap}
+            .nav a{
+              padding:10px 12px;
+              border-radius:10px;
+              border:1px solid transparent;
+              text-decoration:none;
+              color:#d8e5ff;
+              font-size:13px;
+              font-weight:700;
+            }
+            .nav a:hover{background:#172542;border-color:#2a3d65}
+            .nav a.active{
+              background:linear-gradient(135deg,rgba(45,199,231,.22),rgba(75,126,255,.26));
+              border-color:#375b91;
+              color:#f4f8ff;
+            }
+            .content{padding:20px}
+            .head{
+              display:flex;
+              align-items:flex-end;
+              justify-content:space-between;
+              gap:12px;
+            }
+            .head h1{
+              margin:0;
+              font-size:33px;
+              letter-spacing:-.02em;
+            }
+            .head p{
+              margin:6px 0 0;
+              color:var(--muted);
+              font-size:14px;
+            }
+            .status{
+              display:inline-flex;
+              padding:7px 12px;
+              border-radius:999px;
+              font-size:12px;
+              font-weight:800;
+              letter-spacing:.04em;
+              border:1px solid transparent;
+            }
+            .status.warn{color:var(--amber);background:rgba(242,192,96,.14);border-color:rgba(242,192,96,.42)}
+            .status.ok{color:var(--green);background:rgba(69,207,152,.14);border-color:rgba(69,207,152,.42)}
+            .stats{
+              margin-top:13px;
+              display:grid;
+              grid-template-columns:repeat(4,minmax(0,1fr));
+              gap:10px;
+            }
+            .metric{
+              border:1px solid var(--line-soft);
+              border-radius:13px;
+              background:linear-gradient(180deg,#162444,#131f3a);
+              padding:10px 12px;
+            }
+            .metric .k{
+              font-size:11px;
+              text-transform:uppercase;
+              letter-spacing:.07em;
+              color:var(--muted);
+            }
+            .metric .v{
+              margin-top:6px;
+              font-size:22px;
+              font-weight:800;
+            }
+            .grid{
+              margin-top:14px;
+              display:grid;
+              grid-template-columns:repeat(auto-fill,minmax(270px,1fr));
+              gap:12px;
+            }
+            .card{
+              border:1px solid var(--line-soft);
+              border-radius:16px;
+              background:linear-gradient(180deg,var(--card),var(--card-2));
+              overflow:hidden;
+            }
+            .card-main{padding:13px}
+            .tags{
+              display:flex;justify-content:space-between;gap:8px;margin-bottom:10px;
+            }
+            .tag{
+              border-radius:999px;
+              padding:4px 8px;
+              font-size:10px;
+              font-weight:800;
+              letter-spacing:.05em;
+              border:1px solid transparent;
+            }
+            .tag.auto{color:#90f0ff;background:rgba(45,199,231,.12);border-color:rgba(45,199,231,.4)}
+            .tag.state{color:#dce8ff;background:rgba(60,84,132,.24);border-color:#3b517f}
+            .title{margin:0;font-size:20px;line-height:1.28}
+            .company{margin-top:6px;color:#d7e4fb;font-size:13px;font-weight:700}
+            .meta{margin-top:3px;color:var(--muted);font-size:12px}
+            .scores{
+              margin-top:10px;
+              display:grid;
+              grid-template-columns:1fr 1fr;
+              gap:8px;
+            }
+            .score{
+              border:1px solid var(--line-soft);
+              border-radius:10px;
+              background:rgba(8,13,27,.46);
+              padding:8px 9px;
+            }
+            .score span{
+              display:block;
+              color:var(--muted);
+              font-size:10px;
+              text-transform:uppercase;
+              letter-spacing:.06em;
+            }
+            .score strong{display:block;margin-top:4px;font-size:14px}
+            .actions{margin-top:10px;display:flex;gap:7px;flex-wrap:wrap}
+            .btn{
+              display:inline-flex;
+              align-items:center;
+              justify-content:center;
+              min-height:34px;
+              padding:8px 12px;
+              border-radius:10px;
+              border:1px solid transparent;
+              text-decoration:none;
+              font-size:12px;
+              font-weight:800;
+              letter-spacing:.02em;
+              cursor:pointer;
+            }
+            .btn.primary{color:#ecf5ff;background:linear-gradient(135deg,rgba(45,199,231,.34),rgba(75,126,255,.42));border-color:#3f6298}
+            .btn.secondary{color:#dbe8ff;background:#121f3c;border-color:#2d4370}
+            details.editor{border-top:1px solid var(--line-soft);background:#121d35}
+            details.editor > summary{
+              list-style:none;
+              cursor:pointer;
+              padding:10px 13px;
+              font-size:12px;
+              color:#b5c7e7;
+              font-weight:700;
+            }
+            details.editor > summary::-webkit-details-marker{display:none}
+            .edit{padding:0 13px 13px}
+            .panel{
+              border:1px solid var(--line-soft);
+              border-radius:12px;
+              background:rgba(7,11,21,.42);
+              padding:11px;
+              margin-top:10px;
+            }
+            .panel h3{
+              margin:0 0 8px;
+              font-size:11px;
+              text-transform:uppercase;
+              letter-spacing:.07em;
+              color:#abc0e4;
+            }
+            .reason{margin:0;color:#d5e1f8;font-size:13px;line-height:1.5}
+            .ids{margin:0 0 8px;color:var(--muted);font-size:12px}
+            form{display:grid;gap:7px}
+            label{
+              font-size:11px;
+              text-transform:uppercase;
+              letter-spacing:.06em;
+              color:#abc0e4;
+              font-weight:700;
+            }
+            select,input,textarea{
+              width:100%;
+              border:1px solid #2b4170;
+              border-radius:10px;
+              padding:9px 10px;
+              background:#0b1328;
+              color:var(--text);
+              font:inherit;
+            }
+            textarea{min-height:80px;resize:vertical}
+            .save{width:100%;margin-top:4px}
+            .empty{
+              grid-column:1 / -1;
+              border:1px dashed #3b5384;
+              border-radius:14px;
+              padding:32px 16px;
+              text-align:center;
+              color:var(--muted);
+              background:rgba(11,18,35,.52);
+            }
             @media (max-width:1060px){
               .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-              .body{grid-template-columns:1fr}
-              .sum{grid-template-columns:1fr}
-              .chips{justify-content:flex-start}
-              .hero{grid-template-columns:1fr}
-              .hero h1{font-size:25px}
+            }
+            @media (max-width:760px){
+              .shell{padding:0 10px 22px}
+              .topbar{padding:14px}
+              .content{padding:14px}
+              .head{flex-direction:column;align-items:flex-start}
+              .head h1{font-size:28px}
+              .stats{grid-template-columns:1fr}
+              .grid{grid-template-columns:1fr}
             }
           </style>
         </head>
         <body>
           <div class="shell">
-            <header class="topbar">
-              <nav class="nav" aria-label="Hauptnavigation">
-                <a href="{{ url_for('search_page') }}">Suche starten</a>
-                <a href="{{ url_for('applied_jobs_page') }}" class="{{ 'active' if page_key=='applied' else '' }}">Beworben</a>
-                <a href="{{ url_for('not_applied_jobs_page') }}" class="{{ 'active' if page_key=='not_applied' else '' }}">Nicht beworben</a>
-                <a href="{{ url_for('results_jobs_page') }}" class="{{ 'active' if page_key=='results' else '' }}">Ergebnisse</a>
-                <a href="{{ url_for('all_jobs_page') }}" class="{{ 'active' if page_key=='all' else '' }}">Alle Stellen</a>
-                <a href="{{ url_for('settings_page') }}">Einstellungen</a>
-              </nav>
-            </header>
-
-            <section class="hero">
-              <div>
-                <h1>{{ page_title }}</h1>
-                <p>Vollständig neues Dashboard: klare Hierarchie, schnelle Übersicht und fokussierte Detailbearbeitung pro Stelle.</p>
-              </div>
-              <span class="status {{ 'warn' if status == 'Läuft' else 'ok' }}">{{ status }}</span>
-            </section>
-
-            <section class="stats">
-              <article class="metric"><div class="k">Anzeigen</div><div class="v">{{ jobs|length }}</div></article>
-              <article class="metric"><div class="k">Mit Anschreiben</div><div class="v">{{ jobs|selectattr('has_cover_letter')|list|length }}</div></article>
-              <article class="metric"><div class="k">Status</div><div class="v">{{ status }}</div></article>
-              <article class="metric"><div class="k">Aktualisiert</div><div class="v" style="font-size:14px;line-height:1.3;">{{ run_state.finished_at or "-" }}</div></article>
-            </section>
-
-            <section class="cards">
-              {% for job in jobs %}
-              <details class="card">
-                <summary>
-                  <div class="sum">
-                    <div>
-                      <div class="ttl">{{ job.title or "Unbenannte Stelle" }}</div>
-                      <div class="sub">{{ job.employer }} | {{ job.city }} | {{ job.date or "Kein Datum" }}</div>
-                    </div>
-                    <div class="chips">
-                      <span class="chip">{{ job.job_id or job.refnr }}</span>
-                      <span class="chip">AI {{ job.ai_match_score or "-" }}/10</span>
-                      <span class="chip">Score {{ job.keyword_score or "-" }}</span>
-                      <span class="chip">{{ job.application_status_label }}</span>
-                    </div>
-                  </div>
-                </summary>
-                <div class="body">
-                  <section class="panel">
-                    <h3>Stelleninfos</h3>
-                    <div class="sub"><strong>Refnr:</strong> {{ job.refnr }}</div>
-                    <p class="txt" style="margin:10px 0 0;">{{ job.reason or "Noch keine AI-Begründung gespeichert." }}</p>
-                    <div class="actions">
-                      {% if job.job_url %}<a class="btn" href="{{ job.job_url }}" target="_blank" rel="noopener">Stellenquelle öffnen</a>{% endif %}
-                      {% if job.has_cover_letter %}<a class="btn secondary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Anschreiben herunterladen</a>{% endif %}
-                    </div>
-                  </section>
-                  <section class="panel">
-                    <h3>Bewerbung verwalten</h3>
-                    <form method="post" action="{{ url_for('update_job', refnr=job.refnr) }}">
-                      <label>Status</label>
-                      <select name="application_status">
-                        <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Nicht beworben</option>
-                        <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Beworben</option>
-                        <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Nicht bewerben</option>
-                      </select>
-                      <label>Bewerbungsweg</label>
-                      <input name="application_method" value="{{ job.application_method }}" placeholder="z.B. Per E-Mail" />
-                      <label>Ergebnis</label>
-                      <textarea name="application_result" placeholder="Ergebnis / Rückmeldung">{{ job.application_result }}</textarea>
-                      <label>Notiz</label>
-                      <textarea name="note" placeholder="Interne Notiz">{{ job.note }}</textarea>
-                      <button class="btn" type="submit">Änderungen speichern</button>
-                    </form>
-                  </section>
+            <div class="board">
+              <header class="topbar">
+                <div class="brand">
+                  <span class="brand-dot"></span>
+                  <span class="brand-name">AutoJob</span>
                 </div>
-              </details>
-              {% else %}
-              <div class="empty">In diesem Bereich sind aktuell keine Stellen vorhanden.</div>
-              {% endfor %}
-            </section>
+                <nav class="nav" aria-label="Hauptnavigation">
+                  <a href="{{ url_for('search_page') }}">Suche starten</a>
+                  <a href="{{ url_for('applied_jobs_page') }}" class="{{ 'active' if page_key=='applied' else '' }}">Beworben</a>
+                  <a href="{{ url_for('not_applied_jobs_page') }}" class="{{ 'active' if page_key=='not_applied' else '' }}">Nicht beworben</a>
+                  <a href="{{ url_for('results_jobs_page') }}" class="{{ 'active' if page_key=='results' else '' }}">Ergebnisse</a>
+                  <a href="{{ url_for('all_jobs_page') }}" class="{{ 'active' if page_key=='all' else '' }}">Alle Stellen</a>
+                  <a href="{{ url_for('settings_page') }}">Einstellungen</a>
+                </nav>
+              </header>
+
+              <main class="content">
+                <section class="head">
+                  <div>
+                    <h1>{{ page_title }}</h1>
+                    <p>Verfügbare Stellen im kompakten Kartenraster mit direkter Bearbeitung.</p>
+                  </div>
+                  <span class="status {{ 'warn' if status == 'Läuft' else 'ok' }}">{{ status }}</span>
+                </section>
+
+                <section class="stats">
+                  <article class="metric"><div class="k">Stellen</div><div class="v">{{ jobs|length }}</div></article>
+                  <article class="metric"><div class="k">Mit Anschreiben</div><div class="v">{{ jobs|selectattr('has_cover_letter')|list|length }}</div></article>
+                  <article class="metric"><div class="k">Gestartet</div><div class="v" style="font-size:14px">{{ run_state.started_at or "-" }}</div></article>
+                  <article class="metric"><div class="k">Beendet</div><div class="v" style="font-size:14px">{{ run_state.finished_at or "-" }}</div></article>
+                </section>
+
+                <section class="grid">
+                  {% for job in jobs %}
+                  <article class="card">
+                    <div class="card-main">
+                      <div class="tags">
+                        <span class="tag auto">Automatisiert</span>
+                        <span class="tag state">{{ job.application_status_label }}</span>
+                      </div>
+                      <h2 class="title">{{ job.title or "Unbenannte Stelle" }}</h2>
+                      <div class="company">{{ job.employer or "Unbekannter Arbeitgeber" }}</div>
+                      <div class="meta">{{ job.city or "Ort offen" }} · {{ job.date or "Kein Datum" }}</div>
+                      <div class="scores">
+                        <div class="score">
+                          <span>AI Match</span>
+                          <strong>{{ job.ai_match_score or "-" }}/10</strong>
+                        </div>
+                        <div class="score">
+                          <span>Keyword</span>
+                          <strong>{{ job.keyword_score or "-" }}</strong>
+                        </div>
+                      </div>
+                      <div class="actions">
+                        {% if job.job_url %}<a class="btn secondary" href="{{ job.job_url }}" target="_blank" rel="noopener">Stellenquelle</a>{% endif %}
+                        {% if job.has_cover_letter %}<a class="btn primary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Anschreiben</a>{% endif %}
+                      </div>
+                    </div>
+                    <details class="editor">
+                      <summary>Details und Bearbeitung</summary>
+                      <div class="edit">
+                        <section class="panel">
+                          <h3>Stelleninfo</h3>
+                          <p class="ids"><strong>Job-ID:</strong> {{ job.job_id or "-" }} · <strong>Referenz:</strong> {{ job.refnr }}</p>
+                          <p class="reason">{{ job.reason or "Noch keine AI-Begründung gespeichert." }}</p>
+                        </section>
+                        <section class="panel">
+                          <h3>Status verwalten</h3>
+                          <form method="post" action="{{ url_for('update_job', refnr=job.refnr) }}">
+                            <label>Status</label>
+                            <select name="application_status">
+                              <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Nicht beworben</option>
+                              <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Beworben</option>
+                              <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Nicht bewerben</option>
+                            </select>
+                            <label>Bewerbungsweg</label>
+                            <input name="application_method" value="{{ job.application_method }}" placeholder="z.B. Per E-Mail" />
+                            <label>Ergebnis</label>
+                            <textarea name="application_result" placeholder="Ergebnis / Rückmeldung">{{ job.application_result }}</textarea>
+                            <label>Notiz</label>
+                            <textarea name="note" placeholder="Interne Notiz">{{ job.note }}</textarea>
+                            <button class="btn primary save" type="submit">Speichern</button>
+                          </form>
+                        </section>
+                      </div>
+                    </details>
+                  </article>
+                  {% else %}
+                  <div class="empty">In diesem Bereich sind aktuell keine Stellen vorhanden.</div>
+                  {% endfor %}
+                </section>
+              </main>
+            </div>
           </div>
         </body>
         </html>
@@ -1040,69 +1239,83 @@ def render_jobs_page(page_title, page_key):
 def search_page():
     running = is_running()
     run_state = load_run_state()
-    status = "Läuft" if running else run_state.get("status", "idle").title()
+    status = display_run_status(running, run_state.get("status", "idle"))
     logs = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "Noch keine Logs vorhanden."
     recent_logs = "\n".join(clean_log_content(logs).splitlines()[-120:])
     return render_template_string(
         """
         <!doctype html>
-        <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suche starten</title>
-        {% if status == "Läuft" %}<meta http-equiv="refresh" content="5">{% endif %}
-        <style>
-          :root{
-            --bg:#090d1b;--bg2:#0f1630;--line:#273456;--ink:#f2f6ff;--muted:#9fb0d4;
-            --primary:#55a0ff;--primary2:#6d6dff;--ok:#44d18f;--warn:#ffc861;--shadow:0 16px 38px rgba(5,8,20,.45);
-          }
-          body{
-            margin:0;font-family:"Aptos","Segoe UI",Arial,sans-serif;color:var(--ink);
-            background:
-              radial-gradient(1200px 600px at 90% -10%, rgba(109,109,255,.20), transparent 55%),
-              radial-gradient(900px 520px at -10% 20%, rgba(85,160,255,.18), transparent 55%),
-              linear-gradient(180deg,var(--bg),var(--bg2));
-          }
-          .shell{max-width:1160px;margin:0 auto;padding:18px 16px 34px}
-          .topbar{position:sticky;top:0;z-index:40;background:rgba(5,7,13,.86);backdrop-filter:blur(10px);border-bottom:1px solid rgba(156,176,216,.2);margin:-18px -16px 14px;padding:14px 16px 12px}
-          .nav{display:flex;gap:8px;flex-wrap:wrap}
-          .nav a{padding:10px 14px;border-radius:11px;border:1px solid rgba(156,176,216,.3);text-decoration:none;color:var(--ink);background:rgba(17,27,53,.86);font-weight:700;font-size:13px;letter-spacing:.02em}
-          .nav a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));border-color:transparent;color:#fff}
-          .hero{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:linear-gradient(145deg,#15264d,#0f1733 64%);border:1px solid rgba(156,176,216,.28);border-radius:22px;padding:18px;box-shadow:var(--shadow)}
-          .hero h1{margin:0 0 6px;font-size:30px}
-          .hero p{margin:0;color:var(--muted)}
-          .status{padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.04em}
-          .status.ok{background:rgba(74,209,146,.16);color:var(--ok);border:1px solid rgba(74,209,146,.38)}
-          .status.warn{background:rgba(255,200,99,.16);color:var(--warn);border:1px solid rgba(255,200,99,.38)}
-          .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-          .btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:10px;border:1px solid transparent;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;text-decoration:none;font-size:12px;font-weight:800;letter-spacing:.03em}
-          .meta{margin-top:8px;color:var(--muted);font-size:13px}
-          .panel{margin-top:12px;background:linear-gradient(180deg,#101a35,#0d1530);border:1px solid rgba(156,176,216,.26);border-radius:18px;box-shadow:var(--shadow);padding:14px}
-          .panel h2{margin:0 0 10px;font-size:16px}
-          .logs{white-space:pre-wrap;background:rgba(9,13,27,.5);border:1px solid rgba(156,176,216,.26);color:#d7e7f5;border-radius:12px;padding:13px;font-family:Consolas,monospace;font-size:12px;min-height:340px;line-height:1.42}
-          @media (max-width:980px){.hero{grid-template-columns:1fr}.hero h1{font-size:24px}}
-        </style></head><body><div class="shell">
-          <header class="topbar">
-            <nav class="nav">
-              <a href="{{ url_for('search_page') }}" class="active">Suche starten</a>
-              <a href="{{ url_for('applied_jobs_page') }}">Beworben</a>
-              <a href="{{ url_for('not_applied_jobs_page') }}">Nicht beworben</a>
-              <a href="{{ url_for('results_jobs_page') }}">Ergebnisse</a>
-              <a href="{{ url_for('all_jobs_page') }}">Alle Stellen</a>
-              <a href="{{ url_for('settings_page') }}">Einstellungen</a>
-            </nav>
-          </header>
-          <section class="hero">
-            <div>
-              <h1>Suche starten</h1>
-              <p>Führe den kompletten Lauf aus und verfolge den Fortschritt live im Logfenster.</p>
-              <div class="meta">Gestartet: {{ run_state.started_at or "-" }} | Beendet: {{ run_state.finished_at or "-" }}</div>
-              <div class="actions"><a class="btn" href="/run">{{ "Läuft bereits" if status == "Läuft" else "Jobsuche jetzt starten" }}</a></div>
+        <html lang="de">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Suche starten</title>
+          {% if status == "Läuft" %}<meta http-equiv="refresh" content="5">{% endif %}
+          <style>
+            :root{
+              --bg:#060b1a;--bg-soft:#0d1428;--surface:#111a31;--surface-2:#131f3b;--line:#24385f;--line-soft:#1d2d4e;
+              --text:#edf4ff;--muted:#9ab0d3;--aqua:#2dc7e7;--blue:#4b7eff;--green:#45cf98;--amber:#f2c060;--shadow:0 18px 42px rgba(3,7,17,.58);
+            }
+            *{box-sizing:border-box}
+            body{margin:0;color:var(--text);font-family:"Aptos","Segoe UI",Arial,sans-serif;background:radial-gradient(1100px 620px at 110% -8%, rgba(75,126,255,.24), transparent 56%),radial-gradient(980px 560px at -8% 18%, rgba(45,199,231,.16), transparent 58%),linear-gradient(180deg,var(--bg),var(--bg-soft))}
+            .shell{max-width:1360px;margin:24px auto;padding:0 14px 28px}
+            .board{border:1px solid var(--line);border-radius:24px;overflow:hidden;background:linear-gradient(180deg,var(--surface),var(--surface-2));box-shadow:var(--shadow)}
+            .topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 20px;border-bottom:1px solid var(--line-soft);background:rgba(10,16,33,.82)}
+            .brand{display:flex;align-items:center;gap:10px}
+            .brand-dot{width:28px;height:28px;border-radius:8px;background:linear-gradient(145deg,var(--aqua),var(--blue));box-shadow:0 8px 22px rgba(75,126,255,.42)}
+            .brand-name{font-size:17px;font-weight:800;letter-spacing:.02em}
+            .nav{display:flex;gap:6px;flex-wrap:wrap}
+            .nav a{padding:10px 12px;border-radius:10px;border:1px solid transparent;text-decoration:none;color:#d8e5ff;font-size:13px;font-weight:700}
+            .nav a:hover{background:#172542;border-color:#2a3d65}
+            .nav a.active{background:linear-gradient(135deg,rgba(45,199,231,.22),rgba(75,126,255,.26));border-color:#375b91;color:#f4f8ff}
+            .content{padding:20px}
+            .head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+            .head h1{margin:0;font-size:33px;letter-spacing:-.02em}
+            .head p{margin:6px 0 0;color:var(--muted);font-size:14px}
+            .status{display:inline-flex;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.04em;border:1px solid transparent}
+            .status.warn{color:var(--amber);background:rgba(242,192,96,.14);border-color:rgba(242,192,96,.42)}
+            .status.ok{color:var(--green);background:rgba(69,207,152,.14);border-color:rgba(69,207,152,.42)}
+            .meta{margin-top:8px;color:var(--muted);font-size:12px}
+            .btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 14px;margin-top:12px;border-radius:10px;border:1px solid #3f6298;text-decoration:none;color:#ecf5ff;background:linear-gradient(135deg,rgba(45,199,231,.34),rgba(75,126,255,.42));font-size:12px;font-weight:800;letter-spacing:.02em}
+            .panel{margin-top:14px;border:1px solid var(--line-soft);border-radius:14px;background:linear-gradient(180deg,#182443,#15213d);padding:12px}
+            .panel h2{margin:0 0 10px;font-size:16px}
+            .logs{white-space:pre-wrap;font-family:Consolas,monospace;font-size:12px;line-height:1.44;color:#d9e8ff;background:rgba(8,13,27,.46);border:1px solid var(--line-soft);border-radius:11px;min-height:360px;max-height:520px;overflow:auto;padding:12px}
+            @media (max-width:760px){.shell{padding:0 10px 22px}.topbar{padding:14px}.content{padding:14px}.head{flex-direction:column;align-items:flex-start}.head h1{font-size:28px}}
+          </style>
+        </head>
+        <body>
+          <div class="shell">
+            <div class="board">
+              <header class="topbar">
+                <div class="brand"><span class="brand-dot"></span><span class="brand-name">AutoJob</span></div>
+                <nav class="nav">
+                  <a href="{{ url_for('search_page') }}" class="active">Suche starten</a>
+                  <a href="{{ url_for('applied_jobs_page') }}">Beworben</a>
+                  <a href="{{ url_for('not_applied_jobs_page') }}">Nicht beworben</a>
+                  <a href="{{ url_for('results_jobs_page') }}">Ergebnisse</a>
+                  <a href="{{ url_for('all_jobs_page') }}">Alle Stellen</a>
+                  <a href="{{ url_for('settings_page') }}">Einstellungen</a>
+                </nav>
+              </header>
+              <main class="content">
+                <section class="head">
+                  <div>
+                    <h1>Suche starten</h1>
+                    <p>Starte den kompletten Lauf und beobachte den Fortschritt direkt im Logfenster.</p>
+                    <div class="meta">Gestartet: {{ run_state.started_at or "-" }} · Beendet: {{ run_state.finished_at or "-" }}</div>
+                    <a class="btn" href="/run">{{ "Läuft bereits" if status == "Läuft" else "Jobsuche jetzt starten" }}</a>
+                  </div>
+                  <span class="status {{ 'warn' if status == 'Läuft' else 'ok' }}">{{ status }}</span>
+                </section>
+                <section class="panel">
+                  <h2>Live-Logs</h2>
+                  <div class="logs">{{ recent_logs }}</div>
+                </section>
+              </main>
             </div>
-            <span class="status {{ 'warn' if status == 'Läuft' else 'ok' }}">{{ status }}</span>
-          </section>
-          <section class="panel">
-            <h2>Live-Logs</h2>
-            <div class="logs">{{ recent_logs }}</div>
-          </section>
-        </div></body></html>
+          </div>
+        </body>
+        </html>
         """,
         status=status,
         run_state=run_state,
@@ -1111,22 +1324,22 @@ def search_page():
 
 @app.get("/jobs/applied")
 def applied_jobs_page():
-    return render_jobs_page("Applied Jobs", "applied")
+    return render_jobs_page("Beworbene Stellen", "applied")
 
 
 @app.get("/jobs/not-applied")
 def not_applied_jobs_page():
-    return render_jobs_page("Not Applied Jobs", "not_applied")
+    return render_jobs_page("Nicht beworbene Stellen", "not_applied")
 
 
 @app.get("/jobs/results")
 def results_jobs_page():
-    return render_jobs_page("Results", "results")
+    return render_jobs_page("Ergebnisse", "results")
 
 
 @app.get("/jobs/all")
 def all_jobs_page():
-    return render_jobs_page("All Jobs", "all")
+    return render_jobs_page("Alle Stellen", "all")
 
 
 @app.get("/settings")
@@ -1135,59 +1348,75 @@ def settings_page():
     return render_template_string(
         """
         <!doctype html>
-        <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Einstellungen</title>
-        <style>
-          :root{
-            --bg:#090d1b;--bg2:#0f1630;--line:#273456;--ink:#f2f6ff;--muted:#9fb0d4;
-            --primary:#55a0ff;--primary2:#6d6dff;--shadow:0 16px 38px rgba(5,8,20,.45);
-          }
-          body{
-            margin:0;font-family:"Aptos","Segoe UI",Arial,sans-serif;color:var(--ink);
-            background:
-              radial-gradient(1200px 600px at 90% -10%, rgba(109,109,255,.20), transparent 55%),
-              radial-gradient(900px 520px at -10% 20%, rgba(85,160,255,.18), transparent 55%),
-              linear-gradient(180deg,var(--bg),var(--bg2));
-          }
-          .shell{max-width:1000px;margin:0 auto;padding:18px 16px 34px}
-          .topbar{position:sticky;top:0;z-index:40;background:rgba(5,7,13,.86);backdrop-filter:blur(10px);border-bottom:1px solid rgba(156,176,216,.2);margin:-18px -16px 14px;padding:14px 16px 12px}
-          .nav{display:flex;gap:8px;flex-wrap:wrap}
-          .nav a{padding:10px 14px;border-radius:11px;border:1px solid rgba(156,176,216,.3);text-decoration:none;color:var(--ink);background:rgba(17,27,53,.86);font-weight:700;font-size:13px;letter-spacing:.02em}
-          .nav a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));border-color:transparent;color:#fff}
-          .hero{background:linear-gradient(145deg,#15264d,#0f1733 64%);border:1px solid rgba(156,176,216,.28);border-radius:22px;padding:18px;box-shadow:var(--shadow)}
-          .hero h1{margin:0 0 6px;font-size:30px}
-          .hero p{margin:0;color:var(--muted)}
-          .panel{margin-top:12px;background:linear-gradient(180deg,#101a35,#0d1530);border:1px solid rgba(156,176,216,.26);border-radius:18px;box-shadow:var(--shadow);padding:14px}
-          label{display:block;font-size:12px;color:#b8c7e9;margin-bottom:6px;font-weight:800;letter-spacing:.05em}
-          textarea{width:100%;min-height:280px;background:rgba(9,13,27,.45);border:1px solid rgba(156,176,216,.36);border-radius:12px;padding:12px;color:var(--ink);font:inherit}
-          .actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
-          .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;text-decoration:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:800;font-size:12px;letter-spacing:.03em;border:1px solid transparent;cursor:pointer}
-          .btn.secondary{background:rgba(16,26,53,.8);border-color:rgba(156,176,216,.35);color:#d9e6ff}
-        </style></head><body><div class="shell">
-          <header class="topbar">
-            <nav class="nav">
-              <a href="{{ url_for('search_page') }}">Suche starten</a>
-              <a href="{{ url_for('applied_jobs_page') }}">Beworben</a>
-              <a href="{{ url_for('not_applied_jobs_page') }}">Nicht beworben</a>
-              <a href="{{ url_for('results_jobs_page') }}">Ergebnisse</a>
-              <a href="{{ url_for('all_jobs_page') }}">Alle Stellen</a>
-              <a href="{{ url_for('settings_page') }}" class="active">Einstellungen</a>
-            </nav>
-          </header>
-          <section class="hero">
-            <h1>Einstellungen</h1>
-            <p>Bearbeite Suchbegriffe und exportiere die Bewerbungsübersicht aus einem zentralen Bereich.</p>
-          </section>
-          <section class="panel">
-            <form method="post" action="{{ url_for('save_settings_page') }}">
-              <label>SUCHBEGRIFFE (EIN BEGRIFF PRO ZEILE)</label>
-              <textarea name="search_terms_text">{{ terms }}</textarea>
-              <div class="actions">
-                <button class="btn" type="submit">Suchbegriffe speichern</button>
-                <a class="btn secondary" href="{{ url_for('download_applications_summary') }}">Bewerbungsübersicht herunterladen</a>
-              </div>
-            </form>
-          </section>
-        </div></body></html>
+        <html lang="de">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Einstellungen</title>
+          <style>
+            :root{
+              --bg:#060b1a;--bg-soft:#0d1428;--surface:#111a31;--surface-2:#131f3b;--line:#24385f;--line-soft:#1d2d4e;
+              --text:#edf4ff;--muted:#9ab0d3;--aqua:#2dc7e7;--blue:#4b7eff;--shadow:0 18px 42px rgba(3,7,17,.58);
+            }
+            *{box-sizing:border-box}
+            body{margin:0;color:var(--text);font-family:"Aptos","Segoe UI",Arial,sans-serif;background:radial-gradient(1100px 620px at 110% -8%, rgba(75,126,255,.24), transparent 56%),radial-gradient(980px 560px at -8% 18%, rgba(45,199,231,.16), transparent 58%),linear-gradient(180deg,var(--bg),var(--bg-soft))}
+            .shell{max-width:1360px;margin:24px auto;padding:0 14px 28px}
+            .board{border:1px solid var(--line);border-radius:24px;overflow:hidden;background:linear-gradient(180deg,var(--surface),var(--surface-2));box-shadow:var(--shadow)}
+            .topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 20px;border-bottom:1px solid var(--line-soft);background:rgba(10,16,33,.82)}
+            .brand{display:flex;align-items:center;gap:10px}
+            .brand-dot{width:28px;height:28px;border-radius:8px;background:linear-gradient(145deg,var(--aqua),var(--blue));box-shadow:0 8px 22px rgba(75,126,255,.42)}
+            .brand-name{font-size:17px;font-weight:800;letter-spacing:.02em}
+            .nav{display:flex;gap:6px;flex-wrap:wrap}
+            .nav a{padding:10px 12px;border-radius:10px;border:1px solid transparent;text-decoration:none;color:#d8e5ff;font-size:13px;font-weight:700}
+            .nav a:hover{background:#172542;border-color:#2a3d65}
+            .nav a.active{background:linear-gradient(135deg,rgba(45,199,231,.22),rgba(75,126,255,.26));border-color:#375b91;color:#f4f8ff}
+            .content{padding:20px}
+            .head h1{margin:0;font-size:33px;letter-spacing:-.02em}
+            .head p{margin:6px 0 0;color:var(--muted);font-size:14px}
+            .panel{margin-top:14px;border:1px solid var(--line-soft);border-radius:14px;background:linear-gradient(180deg,#182443,#15213d);padding:13px}
+            label{display:block;font-size:11px;color:#abc0e4;margin-bottom:6px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
+            textarea{width:100%;min-height:320px;border:1px solid #2b4170;border-radius:10px;padding:10px;background:#0b1328;color:var(--text);font:inherit}
+            .actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+            .btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 14px;border-radius:10px;border:1px solid transparent;text-decoration:none;font-size:12px;font-weight:800;letter-spacing:.02em;cursor:pointer}
+            .btn.primary{color:#ecf5ff;background:linear-gradient(135deg,rgba(45,199,231,.34),rgba(75,126,255,.42));border-color:#3f6298}
+            .btn.secondary{color:#dbe8ff;background:#121f3c;border-color:#2d4370}
+            @media (max-width:760px){.shell{padding:0 10px 22px}.topbar{padding:14px}.content{padding:14px}.head h1{font-size:28px}}
+          </style>
+        </head>
+        <body>
+          <div class="shell">
+            <div class="board">
+              <header class="topbar">
+                <div class="brand"><span class="brand-dot"></span><span class="brand-name">AutoJob</span></div>
+                <nav class="nav">
+                  <a href="{{ url_for('search_page') }}">Suche starten</a>
+                  <a href="{{ url_for('applied_jobs_page') }}">Beworben</a>
+                  <a href="{{ url_for('not_applied_jobs_page') }}">Nicht beworben</a>
+                  <a href="{{ url_for('results_jobs_page') }}">Ergebnisse</a>
+                  <a href="{{ url_for('all_jobs_page') }}">Alle Stellen</a>
+                  <a href="{{ url_for('settings_page') }}" class="active">Einstellungen</a>
+                </nav>
+              </header>
+              <main class="content">
+                <section class="head">
+                  <h1>Einstellungen</h1>
+                  <p>Suchbegriffe bearbeiten und die Bewerbungsübersicht als Excel herunterladen.</p>
+                </section>
+                <section class="panel">
+                  <form method="post" action="{{ url_for('save_settings_page') }}">
+                    <label>Suchbegriffe (ein Begriff pro Zeile)</label>
+                    <textarea name="search_terms_text">{{ terms }}</textarea>
+                    <div class="actions">
+                      <button class="btn primary" type="submit">Suchbegriffe speichern</button>
+                      <a class="btn secondary" href="{{ url_for('download_applications_summary') }}">Bewerbungsübersicht herunterladen</a>
+                    </div>
+                  </form>
+                </section>
+              </main>
+            </div>
+          </div>
+        </body>
+        </html>
         """,
         terms=terms,
     )
@@ -1256,6 +1485,7 @@ def logs():
     run_state = load_run_state()
     raw_content = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
     content = clean_log_content(raw_content)
+    display_status = display_run_status(running, run_state.get("status", "idle"))
     return render_template_string(
         """
         <!doctype html>
@@ -1291,7 +1521,7 @@ def logs():
         </head>
         <body>
           <div class="top">
-            <div><strong>Status:</strong> {{ run_state.status }}</div>
+            <div><strong>Status:</strong> {{ display_status }}</div>
             <div><strong>Started:</strong> {{ run_state.started_at or "-" }}</div>
             <div><strong>Finished:</strong> {{ run_state.finished_at or "-" }}</div>
             <div><a href="/">Back to dashboard</a></div>
@@ -1303,6 +1533,7 @@ def logs():
         content=content,
         running=running,
         run_state=run_state,
+        display_status=display_status,
     )
 
 
