@@ -846,40 +846,47 @@ def render_jobs_page(page_title, page_key):
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>{{ page_title }}</title>
           <style>
-            :root { --bg:#f4f7fb; --panel:#fff; --line:#d9e2ec; --ink:#1b2a3a; --muted:#5c6f82; --primary:#145ea8; --chip:#eaf2fb; --radius:14px; }
-            *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Arial,sans-serif}
-            .wrap{max-width:1200px;margin:0 auto;padding:16px}
-            .top{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px}
-            .menu{display:flex;gap:8px;flex-wrap:wrap}
-            .menu a{padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600}
-            .menu a.active{background:var(--primary);color:#fff;border-color:var(--primary)}
-            .badge{padding:7px 10px;border-radius:999px;background:{{ '#fff3cd' if status == 'Running' else '#e5f7ee' }};color:{{ '#9a6700' if status == 'Running' else '#1f7a4d' }};font-weight:700}
-            .grid{display:grid;gap:10px}
-            details.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
-            details > summary{list-style:none;cursor:pointer;padding:12px 14px;background:#fbfdff}
-            details > summary::-webkit-details-marker{display:none}
-            .sum-top{display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap}
-            .sum-left{display:grid;gap:4px}
-            .title{font-weight:800}
+            :root {
+              --bg:#f6f8fc; --bg2:#eef2f9; --card:#fff; --line:#dbe3f0; --ink:#1b2535; --muted:#617188;
+              --primary:#4f46e5; --primary-2:#3730a3; --radius:16px; --shadow:0 12px 30px rgba(19,30,53,.08);
+            }
+            *{box-sizing:border-box}
+            body{margin:0;color:var(--ink);font-family:"Segoe UI",Arial,sans-serif;background:linear-gradient(180deg,var(--bg),var(--bg2))}
+            .wrap{max-width:1240px;margin:0 auto;padding:20px 16px 30px}
+            .top{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px 18px;box-shadow:var(--shadow)}
+            .top h2{margin:0;font-size:26px;letter-spacing:-.01em}
+            .menu{display:flex;gap:8px;flex-wrap:wrap;position:sticky;top:8px;z-index:10;margin-bottom:12px}
+            .menu a{padding:9px 12px;border-radius:11px;text-decoration:none;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;font-size:14px}
+            .menu a.active{background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;border-color:transparent}
+            .badge{padding:8px 12px;border-radius:999px;background:{{ '#fff3cd' if status == 'Running' else '#e5f7ee' }};color:{{ '#9a6700' if status == 'Running' else '#1f7a4d' }};font-weight:700;font-size:13px}
+            .grid{display:grid;gap:12px}
+            details.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+            details>summary{list-style:none;cursor:pointer;padding:14px 16px;background:linear-gradient(180deg,#fff,#f7faff)}
+            details>summary::-webkit-details-marker{display:none}
+            .sum-top{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+            .title{font-size:17px;font-weight:800;line-height:1.25}
             .mini{font-size:12px;color:var(--muted)}
-            .chips{display:flex;gap:6px;flex-wrap:wrap}
-            .chip{background:var(--chip);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:700}
-            .body{padding:12px 14px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}
-            .box{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff}
-            .box h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}
-            .actions a,.actions button{display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:9px;text-decoration:none;border:0;background:var(--primary);color:#fff;font-weight:700;cursor:pointer}
-            .actions a.secondary,.actions button.secondary{background:#edf3fa;color:var(--primary);border:1px solid var(--line)}
+            .chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+            .chip{background:#eef3ff;color:#2f3d5a;border:1px solid #d8e2f6;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:700}
+            .body{padding:14px 16px;border-top:1px solid var(--line);display:grid;grid-template-columns:1.1fr .9fr;gap:12px}
+            .box{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}
+            .box h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.08em}
+            .reason{font-size:13px;line-height:1.5;color:#314257}
+            .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+            .btn{display:inline-flex;align-items:center;justify-content:center;padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid transparent;background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;font-weight:700;font-size:13px;cursor:pointer}
+            .btn.secondary{background:#f3f6fd;color:#334867;border-color:#d5deee}
             form{display:grid;gap:8px}
-            select,input,textarea{width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--line);font:inherit;color:var(--ink);background:#fff}
-            textarea{min-height:88px;resize:vertical}
-            .empty{padding:20px;border:1px dashed var(--line);border-radius:12px;background:#fff;color:var(--muted)}
-            @media (max-width:900px){.body{grid-template-columns:1fr}}
+            label{font-size:12px;color:var(--muted);font-weight:600}
+            select,input,textarea{width:100%;padding:10px 11px;border-radius:10px;border:1px solid var(--line);font:inherit;color:var(--ink);background:#fcfdff}
+            textarea{min-height:86px;resize:vertical}
+            .empty{padding:26px;border:1px dashed var(--line);border-radius:14px;background:#fff;color:var(--muted);text-align:center}
+            @media (max-width:960px){.body{grid-template-columns:1fr}.sum-top{grid-template-columns:1fr}.chips{justify-content:flex-start}.top h2{font-size:22px}}
           </style>
         </head>
         <body>
           <div class="wrap">
             <div class="top">
-              <div><h2 style="margin:0 0 4px;">{{ page_title }}</h2><div class="mini">Compact cards. Open to view full details.</div></div>
+              <div><h2 style="margin:0;">{{ page_title }}</h2><div class="mini">Quick scan in compact mode, expand only the jobs you want to review deeply.</div></div>
               <span class="badge">{{ status }}</span>
             </div>
             <nav class="menu" aria-label="Main pages">
@@ -910,25 +917,28 @@ def render_jobs_page(page_title, page_key):
                   <div class="box">
                     <h4>Job Details</h4>
                     <div class="mini"><strong>Refnr:</strong> {{ job.refnr }}</div>
-                    <div class="mini"><strong>Status:</strong> {{ job.application_status_label }}</div>
-                    <div class="mini" style="margin-top:6px;">{{ job.reason }}</div>
-                    <div class="actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                      {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">Job Source</a>{% endif %}
-                      {% if job.has_cover_letter %}<a class="secondary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Download Letter</a>{% endif %}
+                    <div class="reason" style="margin-top:8px;">{{ job.reason or "No AI reasoning stored yet." }}</div>
+                    <div class="actions">
+                      {% if job.job_url %}<a class="btn" href="{{ job.job_url }}" target="_blank" rel="noopener">Open Job Source</a>{% endif %}
+                      {% if job.has_cover_letter %}<a class="btn secondary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Download Cover Letter</a>{% endif %}
                     </div>
                   </div>
                   <div class="box">
                     <h4>Application Tracker</h4>
                     <form method="post" action="{{ url_for('update_job', refnr=job.refnr) }}">
+                      <label>Status</label>
                       <select name="application_status">
                         <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Not Applied</option>
                         <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Applied</option>
                         <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Not to Apply</option>
                       </select>
+                      <label>Application Method</label>
                       <input name="application_method" value="{{ job.application_method }}" placeholder="Application method" />
+                      <label>Result</label>
                       <textarea name="application_result" placeholder="Result">{{ job.application_result }}</textarea>
+                      <label>Notes</label>
                       <textarea name="note" placeholder="Notes">{{ job.note }}</textarea>
-                      <button type="submit">Save</button>
+                      <button class="btn" type="submit">Save Changes</button>
                     </form>
                   </div>
                 </div>
@@ -948,6 +958,7 @@ def render_jobs_page(page_title, page_key):
     )
 
 
+
 @app.get("/search")
 def search_page():
     running = is_running()
@@ -961,13 +972,15 @@ def search_page():
         <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Run Search</title>
         {% if status == "Running" %}<meta http-equiv="refresh" content="5">{% endif %}
         <style>
-          body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:#f4f7fb;color:#1b2a3a}
-          .wrap{max-width:1000px;margin:0 auto;padding:16px}.menu{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-          .menu a{padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid #d9e2ec;background:#fff;color:#1b2a3a;font-weight:600}
-          .menu a.active{background:#145ea8;color:#fff;border-color:#145ea8}.box{background:#fff;border:1px solid #d9e2ec;border-radius:14px;padding:14px}
-          .btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:10px;background:#145ea8;color:#fff;text-decoration:none;font-weight:700}
-          .logs{white-space:pre-wrap;background:#0e2133;color:#d7e7f5;border-radius:10px;padding:12px;font-family:Consolas,monospace;font-size:12px;min-height:240px}
-          .badge{padding:7px 10px;border-radius:999px;background:{{ '#fff3cd' if status == 'Running' else '#e5f7ee' }};color:{{ '#9a6700' if status == 'Running' else '#1f7a4d' }};font-weight:700}
+          :root{--bg:#f6f8fc;--bg2:#eef2f9;--line:#dbe3f0;--ink:#1b2535;--muted:#617188;--primary:#4f46e5;--primary2:#3730a3;--shadow:0 12px 30px rgba(19,30,53,.08)}
+          body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:linear-gradient(180deg,var(--bg),var(--bg2));color:var(--ink)}
+          .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 30px}.menu{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;position:sticky;top:8px;z-index:10}
+          .menu a{padding:9px 12px;border-radius:11px;text-decoration:none;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;font-size:14px}
+          .menu a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;border-color:transparent}
+          .box{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+          .btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:10px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;text-decoration:none;font-weight:700}
+          .logs{white-space:pre-wrap;background:#10172a;color:#d7e7f5;border-radius:12px;padding:13px;font-family:Consolas,monospace;font-size:12px;min-height:270px;line-height:1.4}
+          .badge{padding:8px 12px;border-radius:999px;background:{{ '#fff3cd' if status == 'Running' else '#e5f7ee' }};color:{{ '#9a6700' if status == 'Running' else '#1f7a4d' }};font-weight:700}
         </style></head><body><div class="wrap">
           <nav class="menu">
             <a href="{{ url_for('search_page') }}" class="active">Run Search</a>
@@ -1019,14 +1032,15 @@ def settings_page():
         <!doctype html>
         <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Settings</title>
         <style>
-          body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:#f4f7fb;color:#1b2a3a}
-          .wrap{max-width:900px;margin:0 auto;padding:16px}.menu{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-          .menu a{padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid #d9e2ec;background:#fff;color:#1b2a3a;font-weight:600}
-          .menu a.active{background:#145ea8;color:#fff;border-color:#145ea8}
-          .box{background:#fff;border:1px solid #d9e2ec;border-radius:14px;padding:14px}
-          textarea{width:100%;min-height:220px;border:1px solid #d9e2ec;border-radius:10px;padding:10px;font:inherit}
-          .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;background:#145ea8;color:#fff;text-decoration:none;font-weight:700;border:0;cursor:pointer}
-          .btn.secondary{background:#edf3fa;color:#145ea8;border:1px solid #d9e2ec}
+          :root{--bg:#f6f8fc;--bg2:#eef2f9;--line:#dbe3f0;--ink:#1b2535;--muted:#617188;--primary:#4f46e5;--primary2:#3730a3;--shadow:0 12px 30px rgba(19,30,53,.08)}
+          body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:linear-gradient(180deg,var(--bg),var(--bg2));color:var(--ink)}
+          .wrap{max-width:940px;margin:0 auto;padding:20px 16px 30px}.menu{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;position:sticky;top:8px;z-index:10}
+          .menu a{padding:9px 12px;border-radius:11px;text-decoration:none;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;font-size:14px}
+          .menu a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;border-color:transparent}
+          .box{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+          textarea{width:100%;min-height:240px;border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;background:#fcfdff}
+          .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;text-decoration:none;font-weight:700;border:0;cursor:pointer}
+          .btn.secondary{background:#f3f6fd;color:#334867;border:1px solid #d5deee}
         </style></head><body><div class="wrap">
           <nav class="menu">
             <a href="{{ url_for('search_page') }}">Run Search</a>
@@ -1043,7 +1057,7 @@ def settings_page():
               <textarea name="search_terms_text">{{ terms }}</textarea>
               <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
                 <button class="btn" type="submit">Save Search Terms</button>
-                <a class="btn secondary" href="{{ url_for('download_summary') }}">Download Application Summary</a>
+                <a class="btn secondary" href="{{ url_for('download_applications_summary') }}">Download Application Summary</a>
               </div>
             </form>
           </div>
