@@ -414,6 +414,9 @@ def group_jobs_by_status(jobs):
 
 @app.get("/")
 def dashboard():
+    return redirect(url_for("search_page"))
+
+    # Legacy dashboard kept below but bypassed by redirect.
     jobs = load_jobs()
     grouped_sections = group_jobs_by_status(jobs)
     application_results = [job for job in jobs if (job.get("application_result") or "").strip()]
@@ -817,15 +820,255 @@ def dashboard():
     )
 
 
+def filter_jobs_for_page(jobs, page_key):
+    if page_key == "all":
+        return jobs
+    if page_key == "results":
+        return [job for job in jobs if (job.get("application_result") or "").strip()]
+    if page_key == "applied":
+        return [job for job in jobs if (job.get("application_status") or "") == "applied"]
+    if page_key == "not_applied":
+        return [job for job in jobs if (job.get("application_status") or "") == "not_applied"]
+    return jobs
+
+
+def render_jobs_page(page_title, page_key):
+    jobs = filter_jobs_for_page(load_jobs(), page_key)
+    running = is_running()
+    run_state = load_run_state()
+    status = "Running" if running else run_state.get("status", "idle").title()
+    return render_template_string(
+        """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>{{ page_title }}</title>
+          <style>
+            :root { --bg:#f4f7fb; --panel:#fff; --line:#d9e2ec; --ink:#1b2a3a; --muted:#5c6f82; --primary:#145ea8; --chip:#eaf2fb; --radius:14px; }
+            *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Arial,sans-serif}
+            .wrap{max-width:1200px;margin:0 auto;padding:16px}
+            .top{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px}
+            .menu{display:flex;gap:8px;flex-wrap:wrap}
+            .menu a{padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600}
+            .menu a.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+            .badge{padding:7px 10px;border-radius:999px;background:{{ '#fff3cd' if status == 'Running' else '#e5f7ee' }};color:{{ '#9a6700' if status == 'Running' else '#1f7a4d' }};font-weight:700}
+            .grid{display:grid;gap:10px}
+            details.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+            details > summary{list-style:none;cursor:pointer;padding:12px 14px;background:#fbfdff}
+            details > summary::-webkit-details-marker{display:none}
+            .sum-top{display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+            .sum-left{display:grid;gap:4px}
+            .title{font-weight:800}
+            .mini{font-size:12px;color:var(--muted)}
+            .chips{display:flex;gap:6px;flex-wrap:wrap}
+            .chip{background:var(--chip);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:700}
+            .body{padding:12px 14px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}
+            .box{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff}
+            .box h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}
+            .actions a,.actions button{display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:9px;text-decoration:none;border:0;background:var(--primary);color:#fff;font-weight:700;cursor:pointer}
+            .actions a.secondary,.actions button.secondary{background:#edf3fa;color:var(--primary);border:1px solid var(--line)}
+            form{display:grid;gap:8px}
+            select,input,textarea{width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--line);font:inherit;color:var(--ink);background:#fff}
+            textarea{min-height:88px;resize:vertical}
+            .empty{padding:20px;border:1px dashed var(--line);border-radius:12px;background:#fff;color:var(--muted)}
+            @media (max-width:900px){.body{grid-template-columns:1fr}}
+          </style>
+        </head>
+        <body>
+          <div class="wrap">
+            <div class="top">
+              <div><h2 style="margin:0 0 4px;">{{ page_title }}</h2><div class="mini">Compact cards. Open to view full details.</div></div>
+              <span class="badge">{{ status }}</span>
+            </div>
+            <nav class="menu" aria-label="Main pages">
+              <a href="{{ url_for('search_page') }}">Run Search</a>
+              <a href="{{ url_for('applied_jobs_page') }}" class="{{ 'active' if page_key=='applied' else '' }}">Applied Jobs</a>
+              <a href="{{ url_for('not_applied_jobs_page') }}" class="{{ 'active' if page_key=='not_applied' else '' }}">Not Applied Jobs</a>
+              <a href="{{ url_for('results_jobs_page') }}" class="{{ 'active' if page_key=='results' else '' }}">Results</a>
+              <a href="{{ url_for('all_jobs_page') }}" class="{{ 'active' if page_key=='all' else '' }}">All Jobs</a>
+              <a href="{{ url_for('settings_page') }}">Settings</a>
+            </nav>
+            <div class="grid" style="margin-top:12px;">
+              {% for job in jobs %}
+              <details class="card">
+                <summary>
+                  <div class="sum-top">
+                    <div class="sum-left">
+                      <div class="title">{{ job.title or "Untitled job" }}</div>
+                      <div class="mini">{{ job.employer }} • {{ job.city }} • {{ job.date or "No date" }}</div>
+                    </div>
+                    <div class="chips">
+                      <span class="chip">{{ job.job_id or job.refnr }}</span>
+                      <span class="chip">AI {{ job.ai_match_score or "—" }}/10</span>
+                      <span class="chip">KW {{ job.keyword_score or "—" }}</span>
+                    </div>
+                  </div>
+                </summary>
+                <div class="body">
+                  <div class="box">
+                    <h4>Job Details</h4>
+                    <div class="mini"><strong>Refnr:</strong> {{ job.refnr }}</div>
+                    <div class="mini"><strong>Status:</strong> {{ job.application_status_label }}</div>
+                    <div class="mini" style="margin-top:6px;">{{ job.reason }}</div>
+                    <div class="actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                      {% if job.job_url %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">Job Source</a>{% endif %}
+                      {% if job.has_cover_letter %}<a class="secondary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Download Letter</a>{% endif %}
+                    </div>
+                  </div>
+                  <div class="box">
+                    <h4>Application Tracker</h4>
+                    <form method="post" action="{{ url_for('update_job', refnr=job.refnr) }}">
+                      <select name="application_status">
+                        <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Not Applied</option>
+                        <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Applied</option>
+                        <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Not to Apply</option>
+                      </select>
+                      <input name="application_method" value="{{ job.application_method }}" placeholder="Application method" />
+                      <textarea name="application_result" placeholder="Result">{{ job.application_result }}</textarea>
+                      <textarea name="note" placeholder="Notes">{{ job.note }}</textarea>
+                      <button type="submit">Save</button>
+                    </form>
+                  </div>
+                </div>
+              </details>
+              {% else %}
+              <div class="empty">No jobs in this section.</div>
+              {% endfor %}
+            </div>
+          </div>
+        </body>
+        </html>
+        """,
+        page_title=page_title,
+        page_key=page_key,
+        jobs=jobs,
+        status=status,
+    )
+
+
+@app.get("/search")
+def search_page():
+    running = is_running()
+    run_state = load_run_state()
+    status = "Running" if running else run_state.get("status", "idle").title()
+    logs = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
+    recent_logs = "\n".join(clean_log_content(logs).splitlines()[-80:])
+    return render_template_string(
+        """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Run Search</title>
+        {% if status == "Running" %}<meta http-equiv="refresh" content="5">{% endif %}
+        <style>
+          body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:#f4f7fb;color:#1b2a3a}
+          .wrap{max-width:1000px;margin:0 auto;padding:16px}.menu{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+          .menu a{padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid #d9e2ec;background:#fff;color:#1b2a3a;font-weight:600}
+          .menu a.active{background:#145ea8;color:#fff;border-color:#145ea8}.box{background:#fff;border:1px solid #d9e2ec;border-radius:14px;padding:14px}
+          .btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:10px;background:#145ea8;color:#fff;text-decoration:none;font-weight:700}
+          .logs{white-space:pre-wrap;background:#0e2133;color:#d7e7f5;border-radius:10px;padding:12px;font-family:Consolas,monospace;font-size:12px;min-height:240px}
+          .badge{padding:7px 10px;border-radius:999px;background:{{ '#fff3cd' if status == 'Running' else '#e5f7ee' }};color:{{ '#9a6700' if status == 'Running' else '#1f7a4d' }};font-weight:700}
+        </style></head><body><div class="wrap">
+          <nav class="menu">
+            <a href="{{ url_for('search_page') }}" class="active">Run Search</a>
+            <a href="{{ url_for('applied_jobs_page') }}">Applied Jobs</a>
+            <a href="{{ url_for('not_applied_jobs_page') }}">Not Applied Jobs</a>
+            <a href="{{ url_for('results_jobs_page') }}">Results</a>
+            <a href="{{ url_for('all_jobs_page') }}">All Jobs</a>
+            <a href="{{ url_for('settings_page') }}">Settings</a>
+          </nav>
+          <div class="box"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+            <h2 style="margin:0;">Run Search</h2><span class="badge">{{ status }}</span></div>
+            <div style="margin:8px 0 12px;color:#5c6f82;font-size:13px;">Started: {{ run_state.started_at or "—" }} • Finished: {{ run_state.finished_at or "—" }}</div>
+            <a class="btn" href="/run">{{ "Already Running" if status == "Running" else "Run Job Search" }}</a>
+          </div>
+          <div class="box" style="margin-top:12px;"><h3 style="margin:0 0 10px;">Logs</h3><div class="logs">{{ recent_logs }}</div></div>
+        </div></body></html>
+        """,
+        status=status,
+        run_state=run_state,
+        recent_logs=recent_logs,
+    )
+
+
+@app.get("/jobs/applied")
+def applied_jobs_page():
+    return render_jobs_page("Applied Jobs", "applied")
+
+
+@app.get("/jobs/not-applied")
+def not_applied_jobs_page():
+    return render_jobs_page("Not Applied Jobs", "not_applied")
+
+
+@app.get("/jobs/results")
+def results_jobs_page():
+    return render_jobs_page("Results", "results")
+
+
+@app.get("/jobs/all")
+def all_jobs_page():
+    return render_jobs_page("All Jobs", "all")
+
+
+@app.get("/settings")
+def settings_page():
+    terms = "\n".join(load_search_terms())
+    return render_template_string(
+        """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Settings</title>
+        <style>
+          body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:#f4f7fb;color:#1b2a3a}
+          .wrap{max-width:900px;margin:0 auto;padding:16px}.menu{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+          .menu a{padding:9px 12px;border-radius:10px;text-decoration:none;border:1px solid #d9e2ec;background:#fff;color:#1b2a3a;font-weight:600}
+          .menu a.active{background:#145ea8;color:#fff;border-color:#145ea8}
+          .box{background:#fff;border:1px solid #d9e2ec;border-radius:14px;padding:14px}
+          textarea{width:100%;min-height:220px;border:1px solid #d9e2ec;border-radius:10px;padding:10px;font:inherit}
+          .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;background:#145ea8;color:#fff;text-decoration:none;font-weight:700;border:0;cursor:pointer}
+          .btn.secondary{background:#edf3fa;color:#145ea8;border:1px solid #d9e2ec}
+        </style></head><body><div class="wrap">
+          <nav class="menu">
+            <a href="{{ url_for('search_page') }}">Run Search</a>
+            <a href="{{ url_for('applied_jobs_page') }}">Applied Jobs</a>
+            <a href="{{ url_for('not_applied_jobs_page') }}">Not Applied Jobs</a>
+            <a href="{{ url_for('results_jobs_page') }}">Results</a>
+            <a href="{{ url_for('all_jobs_page') }}">All Jobs</a>
+            <a href="{{ url_for('settings_page') }}" class="active">Settings</a>
+          </nav>
+          <div class="box">
+            <h2 style="margin:0 0 10px;">Settings</h2>
+            <form method="post" action="{{ url_for('save_settings_page') }}">
+              <label style="display:block;font-size:13px;color:#5c6f82;margin-bottom:6px;">Search Terms (one per line)</label>
+              <textarea name="search_terms_text">{{ terms }}</textarea>
+              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn" type="submit">Save Search Terms</button>
+                <a class="btn secondary" href="{{ url_for('download_summary') }}">Download Application Summary</a>
+              </div>
+            </form>
+          </div>
+        </div></body></html>
+        """,
+        terms=terms,
+    )
+
+
+@app.post("/settings")
+def save_settings_page():
+    text = request.form.get("search_terms_text", "")
+    save_search_terms_text(text)
+    return redirect(url_for("settings_page"))
+
+
 @app.get("/run")
 def run_script():
     global current_process
 
     if is_running():
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("search_page"))
 
     start_search_process()
-    return redirect(url_for("dashboard"))
+    return redirect(url_for("search_page"))
 
 
 def start_search_process():
@@ -1019,7 +1262,10 @@ def update_job(refnr):
                 "updated_at": datetime.now().isoformat(),
             }
         ).eq("refnr", str(refnr)).execute()
-    return redirect(url_for("dashboard"))
+    referer = request.headers.get("Referer")
+    if referer:
+        return redirect(referer)
+    return redirect(url_for("all_jobs_page"))
 
 
 @app.patch("/api/jobs/<refnr>")
