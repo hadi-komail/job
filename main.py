@@ -49,7 +49,7 @@ REQUEST_RETRIES = 1
 REQUEST_RETRY_DELAY_SECONDS = 0
 SEARCH_PAGE_SIZE = 20
 SEARCH_MAX_PAGES = 2
-MIN_SCORE_TO_PRINT = 1
+MIN_SCORE_TO_PRINT = 2
 MAX_COVER_LETTERS = 20
 MIN_AI_MATCH_SCORE = 7
 CV_PATH = Path("about-ai.txt")
@@ -416,6 +416,15 @@ def next_cover_letter_job_id_number(client):
     return (max(used_numbers) + 1) if used_numbers else 1
 
 
+def is_job_id_prefix_in_use(client, number):
+    if client is None:
+        return False
+    prefix = f"{number:04d}-"
+    response = client.table(SUPABASE_TABLE).select("refnr").like("job_id", f"{prefix}%").limit(1).execute()
+    rows = response.data or []
+    return bool(rows)
+
+
 def assign_job_id_if_missing(client, refnr, employer, current_job_id):
     existing_job_id = str(current_job_id or "").strip()
     if existing_job_id:
@@ -423,11 +432,15 @@ def assign_job_id_if_missing(client, refnr, employer, current_job_id):
     if client is None:
         return None
 
-    next_number = next_cover_letter_job_id_number(client)
-    if next_number is None:
+    candidate = next_cover_letter_job_id_number(client)
+    if candidate is None:
         return None
 
-    return build_job_id(next_number, employer)
+    # Keep numeric prefixes globally unique (0001, 0002, ...) even if employer suffixes differ.
+    while is_job_id_prefix_in_use(client, candidate):
+        candidate += 1
+
+    return build_job_id(candidate, employer)
 
 
 def build_cover_letter_prompt(cv_text, job, description):
