@@ -308,7 +308,11 @@ def get_supabase_client():
 def upsert_job_in_supabase(client, payload):
     if client is None:
         return
-    client.table(SUPABASE_TABLE).upsert(payload, on_conflict="refnr").execute()
+    safe_payload = dict(payload)
+    # Never overwrite an existing immutable ID with an empty value.
+    if not str(safe_payload.get("job_id") or "").strip():
+        safe_payload.pop("job_id", None)
+    client.table(SUPABASE_TABLE).upsert(safe_payload, on_conflict="refnr").execute()
 
 
 def load_existing_jobs_from_supabase(client):
@@ -444,6 +448,18 @@ def assign_job_id_if_missing(client, refnr, employer, current_job_id):
         return existing_job_id
     if client is None:
         return None
+    # Re-read from Supabase so in-memory misses can never trigger a re-assignment.
+    existing_row = (
+        client.table(SUPABASE_TABLE)
+        .select("job_id")
+        .eq("refnr", str(refnr))
+        .limit(1)
+        .execute()
+    ).data or []
+    if existing_row:
+        db_job_id = str((existing_row[0] or {}).get("job_id") or "").strip()
+        if db_job_id:
+            return db_job_id
 
     candidate = next_cover_letter_job_id_number(client)
     if candidate is None:
