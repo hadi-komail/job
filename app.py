@@ -177,8 +177,23 @@ def load_jobs():
     client = get_supabase_client()
     if client is None:
         return []
-    response = client.table(SUPABASE_TABLE).select("*").order("created_at", desc=True).execute()
-    rows = response.data or []
+    rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        response = (
+            client.table(SUPABASE_TABLE)
+            .select("*")
+            .order("created_at", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = response.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
     jobs = []
     for row in rows:
         refnr = str(row.get("refnr", "")).strip()
