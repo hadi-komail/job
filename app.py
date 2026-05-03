@@ -22,9 +22,9 @@ RUN_STATE_FILE = BASE_DIR / "run_state.json"
 SUPABASE_TABLE = "jobs"
 STATUS_ORDER = ["not_applied", "applied", "not_to_apply"]
 STATUS_LABELS = {
-    "not_applied": "Not Applied",
-    "applied": "Applied",
-    "not_to_apply": "Not to Apply",
+    "not_applied": "Nicht beworben",
+    "applied": "Beworben",
+    "not_to_apply": "Nicht bewerben",
 }
 SEARCH_TERMS_FILE = BASE_DIR / "search_terms.json"
 LETTER_FONT_NAME = "Helvetica"
@@ -57,10 +57,10 @@ def save_json(path, data):
 
 def default_search_terms():
     return [
-        "TÃ¼rkisch",
+        "Türkisch",
         "Migration",
-        "GeflÃ¼chtete",
-        "Sociology",
+        "Geflüchtete",
+        "Soziologie",
         "Integration",
         "Farsi",
         "Sozialbetreuer",
@@ -68,22 +68,34 @@ def default_search_terms():
         "Soziologie",
         "Internationale Beziehungen",
         "Sozialwissenschaftler",
-        "FlÃ¼chtlinge",
+        "Flüchtlinge",
         "Mehrsprachigkeit",
         "Zuwanderer",
     ]
 
 
+def repair_mojibake(text):
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    try:
+        repaired = raw.encode("latin-1").decode("utf-8")
+        return repaired
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return raw
+
+
 def load_search_terms():
     data = load_json(SEARCH_TERMS_FILE, {"terms": default_search_terms()})
     raw_terms = data.get("terms", data) if isinstance(data, dict) else data
-    terms = [str(term).strip() for term in raw_terms or []]
+    terms = [repair_mojibake(term) for term in raw_terms or []]
     terms = [term for term in terms if term]
     return terms or default_search_terms()
 
 
 def save_search_terms_text(text):
     terms = [term.strip() for term in text.replace(";", "\n").replace(",", "\n").splitlines()]
+    terms = [repair_mojibake(term) for term in terms]
     terms = [term for term in terms if term]
     save_json(SEARCH_TERMS_FILE, {"terms": terms})
     return terms
@@ -658,8 +670,8 @@ def dashboard():
           <div class="panel">
             <div class="tiny">Runner</div>
             <div style="margin: 8px 0 14px;"><span class="status-badge">{{ status }}</span></div>
-            <div class="tiny">Started: {{ run_state.started_at or "â€”" }}</div>
-            <div class="tiny" style="margin-bottom: 10px;">Finished: {{ run_state.finished_at or "â€”" }}</div>
+            <div class="tiny">Started: {{ run_state.started_at or "-" }}</div>
+            <div class="tiny" style="margin-bottom: 10px;">Finished: {{ run_state.finished_at or "-" }}</div>
             <a class="button" href="/run">{{ "Already Running" if status == "Running" else "Run Job Search" }}</a>
           </div>
           <div class="panel">
@@ -836,177 +848,183 @@ def render_jobs_page(page_title, page_key):
     jobs = filter_jobs_for_page(load_jobs(), page_key)
     running = is_running()
     run_state = load_run_state()
-    status = "Running" if running else run_state.get("status", "idle").title()
+    status = "Läuft" if running else run_state.get("status", "idle").title()
     return render_template_string(
         """
         <!doctype html>
-        <html lang="en">
+        <html lang="de">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>{{ page_title }}</title>
           <style>
-            :root{
-              --bg:#090d1b;--bg2:#0f1630;--card:#101a35;--card2:#0d1530;--line:#273456;
-              --ink:#f2f6ff;--muted:#9fb0d4;--primary:#55a0ff;--primary2:#6d6dff;--ok:#44d18f;--warn:#ffc861;
-              --radius:18px;--shadow:0 16px 38px rgba(5,8,20,.45);
+            :root {
+              --bg-0:#05070d;
+              --bg-1:#0a1021;
+              --bg-2:#111a34;
+              --panel:#111b35;
+              --panel-2:#0d1530;
+              --line:#2b3c64;
+              --ink:#edf3ff;
+              --muted:#9cb0d8;
+              --primary:#56a4ff;
+              --primary-2:#7a6dff;
+              --ok:#4ad192;
+              --warn:#ffc863;
+              --radius:18px;
+              --shadow:0 18px 42px rgba(4,7,16,.5);
             }
             *{box-sizing:border-box}
             body{
-              margin:0;font-family:"Aptos","Segoe UI",Arial,sans-serif;color:var(--ink);
+              margin:0;
+              color:var(--ink);
+              font-family:"Aptos","Segoe UI",Arial,sans-serif;
               background:
-                radial-gradient(1200px 600px at 90% -10%, rgba(109,109,255,.20), transparent 55%),
-                radial-gradient(900px 520px at -10% 20%, rgba(85,160,255,.18), transparent 55%),
-                linear-gradient(180deg,var(--bg),var(--bg2));
+                radial-gradient(1100px 600px at 100% -8%, rgba(122,109,255,.22), transparent 60%),
+                radial-gradient(900px 520px at -8% 24%, rgba(86,164,255,.18), transparent 58%),
+                linear-gradient(180deg,var(--bg-0),var(--bg-1) 35%,var(--bg-2));
             }
-            .wrap{max-width:1280px;margin:0 auto;padding:18px 16px 34px}
+            .shell{max-width:1360px;margin:0 auto;padding:18px 16px 34px}
             .topbar{
-              position:sticky;top:0;z-index:40;background:rgba(9,13,27,.84);backdrop-filter:blur(9px);
-              border-bottom:1px solid rgba(159,176,212,.22);margin:-18px -16px 14px;padding:14px 16px 12px;
+              position:sticky;top:0;z-index:40;background:rgba(5,7,13,.86);backdrop-filter:blur(10px);
+              border-bottom:1px solid rgba(156,176,216,.2);margin:-18px -16px 14px;padding:14px 16px 12px;
             }
-            .menu{display:flex;gap:8px;flex-wrap:wrap}
-            .menu a{
-              padding:10px 14px;border-radius:11px;text-decoration:none;border:1px solid rgba(159,176,212,.28);
-              background:rgba(16,26,53,.86);color:var(--ink);font-weight:700;font-size:13px;letter-spacing:.02em;
+            .nav{display:flex;gap:8px;flex-wrap:wrap}
+            .nav a{
+              padding:10px 14px;border-radius:11px;border:1px solid rgba(156,176,216,.3);text-decoration:none;
+              color:var(--ink);background:rgba(17,27,53,.86);font-weight:700;font-size:13px;letter-spacing:.02em;
             }
-            .menu a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;border-color:transparent}
+            .nav a.active{background:linear-gradient(135deg,var(--primary),var(--primary-2));border-color:transparent;color:#fff}
             .hero{
               display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
-              background:linear-gradient(140deg,#132044,#0d1630);border:1px solid rgba(159,176,212,.28);
-              border-radius:22px;padding:18px;box-shadow:var(--shadow);
+              background:linear-gradient(145deg,#15264d,#0f1733 64%);
+              border:1px solid rgba(156,176,216,.28);
+              border-radius:22px;
+              padding:18px;
+              box-shadow:var(--shadow);
             }
-            .hero h2{margin:0 0 6px;font-size:28px;letter-spacing:-.01em}
+            .hero h1{margin:0 0 6px;font-size:30px;letter-spacing:-.02em}
             .hero p{margin:0;color:var(--muted);font-size:14px}
-            .badge{padding:8px 12px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.04em}
-            .badge.run{background:rgba(255,200,97,.14);color:var(--warn);border:1px solid rgba(255,200,97,.36)}
-            .badge.idle{background:rgba(68,209,143,.14);color:var(--ok);border:1px solid rgba(68,209,143,.35)}
+            .status{padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.04em}
+            .status.ok{background:rgba(74,209,146,.16);color:var(--ok);border:1px solid rgba(74,209,146,.38)}
+            .status.warn{background:rgba(255,200,99,.16);color:var(--warn);border:1px solid rgba(255,200,99,.38)}
+            .stats{margin-top:12px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+            .metric{background:rgba(17,27,53,.75);border:1px solid rgba(156,176,216,.26);border-radius:14px;padding:12px}
+            .metric .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+            .metric .v{font-size:22px;font-weight:800;margin-top:6px}
             .cards{display:grid;gap:12px;margin-top:14px}
-            details.job{
-              background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid rgba(159,176,212,.26);
-              border-radius:18px;box-shadow:var(--shadow);overflow:hidden;
+            details.card{
+              border:1px solid rgba(156,176,216,.26);border-radius:18px;overflow:hidden;
+              background:linear-gradient(180deg,var(--panel),var(--panel-2));box-shadow:var(--shadow);
             }
-            details>summary{list-style:none;padding:14px 16px;cursor:pointer}
-            details>summary::-webkit-details-marker{display:none}
+            details > summary{list-style:none;cursor:pointer;padding:14px 16px}
+            details > summary::-webkit-details-marker{display:none}
             .sum{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
-            .title{font-size:18px;font-weight:800;line-height:1.3}
-            .mini{color:var(--muted);font-size:12px;margin-top:4px}
+            .ttl{font-size:18px;font-weight:800;line-height:1.3}
+            .sub{color:var(--muted);font-size:12px;margin-top:4px}
             .chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-            .chip{
-              border:1px solid rgba(159,176,212,.3);background:rgba(9,13,27,.35);color:#d6e4ff;
-              border-radius:999px;padding:4px 8px;font-size:11px;font-weight:700
-            }
-            .body{
-              border-top:1px solid rgba(159,176,212,.22);padding:14px 16px 16px;
-              display:grid;grid-template-columns:1.15fr .85fr;gap:12px;
-            }
-            .panel{
-              border:1px solid rgba(159,176,212,.25);background:rgba(9,13,27,.28);
-              border-radius:14px;padding:12px;
-            }
-            .box{
-              border:1px solid rgba(159,176,212,.25);background:rgba(9,13,27,.28);
-              border-radius:14px;padding:12px;
-            }
-            .panel h4{margin:0 0 10px;color:#b8c7e9;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
-            .box h4{margin:0 0 10px;color:#b8c7e9;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
-            .reason{font-size:13px;line-height:1.55;color:#c8d6f4}
+            .chip{border:1px solid rgba(156,176,216,.32);background:rgba(9,13,27,.38);border-radius:999px;padding:4px 8px;font-size:11px;font-weight:700;color:#d8e4ff}
+            .body{border-top:1px solid rgba(156,176,216,.24);padding:14px 16px 16px;display:grid;grid-template-columns:1.12fr .88fr;gap:12px}
+            .panel{border:1px solid rgba(156,176,216,.25);background:rgba(9,13,27,.32);border-radius:14px;padding:12px}
+            .panel h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#b5c7ea}
+            .txt{color:#c8d6f4;font-size:13px;line-height:1.55}
             .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-            .btn{
-              display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px;
-              border:1px solid transparent;text-decoration:none;background:linear-gradient(135deg,var(--primary),var(--primary2));
-              color:#fff;font-weight:800;font-size:12px;letter-spacing:.03em;cursor:pointer;
-            }
-            .btn.secondary{background:rgba(16,26,53,.8);border-color:rgba(159,176,212,.35);color:#d9e6ff}
+            .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;text-decoration:none;font-size:12px;font-weight:800;letter-spacing:.03em;cursor:pointer}
+            .btn.secondary{background:rgba(17,27,53,.82);border-color:rgba(156,176,216,.36);color:#dbe6ff}
             form{display:grid;gap:8px}
-            label{font-size:12px;font-weight:700;color:#b8c7e9}
-            select,input,textarea{
-              width:100%;background:rgba(9,13,27,.45);border:1px solid rgba(159,176,212,.36);
-              border-radius:10px;padding:10px 11px;color:var(--ink);font:inherit;
-            }
-            textarea{min-height:84px;resize:vertical}
-            .empty{
-              border:1px dashed rgba(159,176,212,.35);border-radius:14px;padding:28px;text-align:center;
-              color:var(--muted);background:rgba(16,26,53,.5)
-            }
-            @media (max-width:980px){
-              .hero{grid-template-columns:1fr}
-              .hero h2{font-size:24px}
+            label{font-size:12px;font-weight:700;color:#b8c8ea}
+            select,input,textarea{width:100%;border-radius:10px;border:1px solid rgba(156,176,216,.38);padding:10px 11px;background:rgba(8,12,25,.5);color:var(--ink);font:inherit}
+            textarea{min-height:86px;resize:vertical}
+            .empty{border:1px dashed rgba(156,176,216,.36);background:rgba(17,27,53,.5);border-radius:14px;padding:30px;text-align:center;color:var(--muted)}
+            @media (max-width:1060px){
+              .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+              .body{grid-template-columns:1fr}
               .sum{grid-template-columns:1fr}
               .chips{justify-content:flex-start}
-              .body{grid-template-columns:1fr}
+              .hero{grid-template-columns:1fr}
+              .hero h1{font-size:25px}
             }
           </style>
         </head>
         <body>
-          <div class="wrap">
+          <div class="shell">
             <header class="topbar">
-              <nav class="menu" aria-label="Main pages">
-                <a href="{{ url_for('search_page') }}">Run Search</a>
-                <a href="{{ url_for('applied_jobs_page') }}" class="{{ 'active' if page_key=='applied' else '' }}">Applied Jobs</a>
-                <a href="{{ url_for('not_applied_jobs_page') }}" class="{{ 'active' if page_key=='not_applied' else '' }}">Not Applied Jobs</a>
-                <a href="{{ url_for('results_jobs_page') }}" class="{{ 'active' if page_key=='results' else '' }}">Results</a>
-                <a href="{{ url_for('all_jobs_page') }}" class="{{ 'active' if page_key=='all' else '' }}">All Jobs</a>
-                <a href="{{ url_for('settings_page') }}">Settings</a>
+              <nav class="nav" aria-label="Hauptnavigation">
+                <a href="{{ url_for('search_page') }}">Suche starten</a>
+                <a href="{{ url_for('applied_jobs_page') }}" class="{{ 'active' if page_key=='applied' else '' }}">Beworben</a>
+                <a href="{{ url_for('not_applied_jobs_page') }}" class="{{ 'active' if page_key=='not_applied' else '' }}">Nicht beworben</a>
+                <a href="{{ url_for('results_jobs_page') }}" class="{{ 'active' if page_key=='results' else '' }}">Ergebnisse</a>
+                <a href="{{ url_for('all_jobs_page') }}" class="{{ 'active' if page_key=='all' else '' }}">Alle Stellen</a>
+                <a href="{{ url_for('settings_page') }}">Einstellungen</a>
               </nav>
             </header>
+
             <section class="hero">
               <div>
-                <h2>{{ page_title }}</h2>
-                <p>New streamlined workflow: scan quickly, expand only relevant cards, and update actions in context.</p>
+                <h1>{{ page_title }}</h1>
+                <p>Vollständig neues Dashboard: klare Hierarchie, schnelle Übersicht und fokussierte Detailbearbeitung pro Stelle.</p>
               </div>
-              <span class="badge {{ 'run' if status == 'Running' else 'idle' }}">{{ status }}</span>
+              <span class="status {{ 'warn' if status == 'Läuft' else 'ok' }}">{{ status }}</span>
             </section>
-            <div class="cards">
+
+            <section class="stats">
+              <article class="metric"><div class="k">Anzeigen</div><div class="v">{{ jobs|length }}</div></article>
+              <article class="metric"><div class="k">Mit Anschreiben</div><div class="v">{{ jobs|selectattr('has_cover_letter')|list|length }}</div></article>
+              <article class="metric"><div class="k">Status</div><div class="v">{{ status }}</div></article>
+              <article class="metric"><div class="k">Aktualisiert</div><div class="v" style="font-size:14px;line-height:1.3;">{{ run_state.finished_at or "-" }}</div></article>
+            </section>
+
+            <section class="cards">
               {% for job in jobs %}
-              <details class="job">
+              <details class="card">
                 <summary>
                   <div class="sum">
                     <div>
-                      <div class="title">{{ job.title or "Untitled job" }}</div>
-                      <div class="mini">{{ job.employer }} | {{ job.city }} | {{ job.date or "No date" }}</div>
+                      <div class="ttl">{{ job.title or "Unbenannte Stelle" }}</div>
+                      <div class="sub">{{ job.employer }} | {{ job.city }} | {{ job.date or "Kein Datum" }}</div>
                     </div>
                     <div class="chips">
                       <span class="chip">{{ job.job_id or job.refnr }}</span>
                       <span class="chip">AI {{ job.ai_match_score or "-" }}/10</span>
-                      <span class="chip">KW {{ job.keyword_score or "-" }}</span>
+                      <span class="chip">Score {{ job.keyword_score or "-" }}</span>
                       <span class="chip">{{ job.application_status_label }}</span>
                     </div>
                   </div>
                 </summary>
                 <div class="body">
-                  <div class="box">
-                    <h4>Job Details</h4>
-                    <div class="mini"><strong>Refnr:</strong> {{ job.refnr }}</div>
-                    <div class="reason" style="margin-top:8px;">{{ job.reason or "No AI reasoning stored yet." }}</div>
+                  <section class="panel">
+                    <h3>Stelleninfos</h3>
+                    <div class="sub"><strong>Refnr:</strong> {{ job.refnr }}</div>
+                    <p class="txt" style="margin:10px 0 0;">{{ job.reason or "Noch keine AI-Begründung gespeichert." }}</p>
                     <div class="actions">
-                      {% if job.job_url %}<a class="btn" href="{{ job.job_url }}" target="_blank" rel="noopener">Open Job Source</a>{% endif %}
-                      {% if job.has_cover_letter %}<a class="btn secondary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Download Cover Letter</a>{% endif %}
+                      {% if job.job_url %}<a class="btn" href="{{ job.job_url }}" target="_blank" rel="noopener">Stellenquelle öffnen</a>{% endif %}
+                      {% if job.has_cover_letter %}<a class="btn secondary" href="{{ url_for('download_cover_letter', job_ai=(job.job_id or job.refnr), refnr=job.refnr) }}">Anschreiben herunterladen</a>{% endif %}
                     </div>
-                  </div>
-                  <div class="box">
-                    <h4>Application Tracker</h4>
+                  </section>
+                  <section class="panel">
+                    <h3>Bewerbung verwalten</h3>
                     <form method="post" action="{{ url_for('update_job', refnr=job.refnr) }}">
                       <label>Status</label>
                       <select name="application_status">
-                        <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Not Applied</option>
-                        <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Applied</option>
-                        <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Not to Apply</option>
+                        <option value="not_applied" {{ "selected" if job.application_status == "not_applied" else "" }}>Nicht beworben</option>
+                        <option value="applied" {{ "selected" if job.application_status == "applied" else "" }}>Beworben</option>
+                        <option value="not_to_apply" {{ "selected" if job.application_status == "not_to_apply" else "" }}>Nicht bewerben</option>
                       </select>
-                      <label>Application Method</label>
-                      <input name="application_method" value="{{ job.application_method }}" placeholder="Application method" />
-                      <label>Result</label>
-                      <textarea name="application_result" placeholder="Result">{{ job.application_result }}</textarea>
-                      <label>Notes</label>
-                      <textarea name="note" placeholder="Notes">{{ job.note }}</textarea>
-                      <button class="btn" type="submit">Save Changes</button>
+                      <label>Bewerbungsweg</label>
+                      <input name="application_method" value="{{ job.application_method }}" placeholder="z.B. Per E-Mail" />
+                      <label>Ergebnis</label>
+                      <textarea name="application_result" placeholder="Ergebnis / Rückmeldung">{{ job.application_result }}</textarea>
+                      <label>Notiz</label>
+                      <textarea name="note" placeholder="Interne Notiz">{{ job.note }}</textarea>
+                      <button class="btn" type="submit">Änderungen speichern</button>
                     </form>
-                  </div>
+                  </section>
                 </div>
               </details>
               {% else %}
-              <div class="empty">No jobs in this section.</div>
+              <div class="empty">In diesem Bereich sind aktuell keine Stellen vorhanden.</div>
               {% endfor %}
-            </div>
+            </section>
           </div>
         </body>
         </html>
@@ -1015,22 +1033,21 @@ def render_jobs_page(page_title, page_key):
         page_key=page_key,
         jobs=jobs,
         status=status,
+        run_state=run_state,
     )
-
-
 
 @app.get("/search")
 def search_page():
     running = is_running()
     run_state = load_run_state()
-    status = "Running" if running else run_state.get("status", "idle").title()
-    logs = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "No log file yet."
-    recent_logs = "\n".join(clean_log_content(logs).splitlines()[-80:])
+    status = "Läuft" if running else run_state.get("status", "idle").title()
+    logs = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else "Noch keine Logs vorhanden."
+    recent_logs = "\n".join(clean_log_content(logs).splitlines()[-120:])
     return render_template_string(
         """
         <!doctype html>
-        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Run Search</title>
-        {% if status == "Running" %}<meta http-equiv="refresh" content="5">{% endif %}
+        <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Suche starten</title>
+        {% if status == "Läuft" %}<meta http-equiv="refresh" content="5">{% endif %}
         <style>
           :root{
             --bg:#090d1b;--bg2:#0f1630;--line:#273456;--ink:#f2f6ff;--muted:#9fb0d4;
@@ -1043,66 +1060,46 @@ def search_page():
               radial-gradient(900px 520px at -10% 20%, rgba(85,160,255,.18), transparent 55%),
               linear-gradient(180deg,var(--bg),var(--bg2));
           }
-          .wrap{max-width:1120px;margin:0 auto;padding:18px 16px 34px}
-          .topbar{
-            position:sticky;top:0;z-index:40;background:rgba(9,13,27,.84);backdrop-filter:blur(9px);
-            border-bottom:1px solid rgba(159,176,212,.22);margin:-18px -16px 14px;padding:14px 16px 12px;
-          }
-          .menu{display:flex;gap:8px;flex-wrap:wrap}
-          .menu a{
-            padding:10px 14px;border-radius:11px;text-decoration:none;border:1px solid rgba(159,176,212,.28);
-            background:rgba(16,26,53,.86);color:var(--ink);font-weight:700;font-size:13px;letter-spacing:.02em;
-          }
-          .menu a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;border-color:transparent}
-          .hero{
-            display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
-            background:linear-gradient(140deg,#132044,#0d1630);border:1px solid rgba(159,176,212,.28);
-            border-radius:22px;padding:18px;box-shadow:var(--shadow);
-          }
-          .hero h2{margin:0 0 6px;font-size:28px}
+          .shell{max-width:1160px;margin:0 auto;padding:18px 16px 34px}
+          .topbar{position:sticky;top:0;z-index:40;background:rgba(5,7,13,.86);backdrop-filter:blur(10px);border-bottom:1px solid rgba(156,176,216,.2);margin:-18px -16px 14px;padding:14px 16px 12px}
+          .nav{display:flex;gap:8px;flex-wrap:wrap}
+          .nav a{padding:10px 14px;border-radius:11px;border:1px solid rgba(156,176,216,.3);text-decoration:none;color:var(--ink);background:rgba(17,27,53,.86);font-weight:700;font-size:13px;letter-spacing:.02em}
+          .nav a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));border-color:transparent;color:#fff}
+          .hero{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:linear-gradient(145deg,#15264d,#0f1733 64%);border:1px solid rgba(156,176,216,.28);border-radius:22px;padding:18px;box-shadow:var(--shadow)}
+          .hero h1{margin:0 0 6px;font-size:30px}
           .hero p{margin:0;color:var(--muted)}
-          .badge{padding:8px 12px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.04em}
-          .badge.run{background:rgba(255,200,97,.14);color:var(--warn);border:1px solid rgba(255,200,97,.36)}
-          .badge.idle{background:rgba(68,209,143,.14);color:var(--ok);border:1px solid rgba(68,209,143,.35)}
+          .status{padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.04em}
+          .status.ok{background:rgba(74,209,146,.16);color:var(--ok);border:1px solid rgba(74,209,146,.38)}
+          .status.warn{background:rgba(255,200,99,.16);color:var(--warn);border:1px solid rgba(255,200,99,.38)}
           .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-          .btn{
-            display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:10px;
-            text-decoration:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;
-            font-weight:800;font-size:12px;letter-spacing:.03em;border:1px solid transparent;
-          }
-          .panel{
-            margin-top:12px;background:linear-gradient(180deg,#101a35,#0d1530);border:1px solid rgba(159,176,212,.26);
-            border-radius:18px;box-shadow:var(--shadow);padding:14px;
-          }
-          .panel h3{margin:0 0 10px}
-          .logs{
-            white-space:pre-wrap;background:rgba(9,13,27,.5);border:1px solid rgba(159,176,212,.26);color:#d7e7f5;
-            border-radius:12px;padding:13px;font-family:Consolas,monospace;font-size:12px;min-height:330px;line-height:1.42;
-          }
+          .btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:10px;border:1px solid transparent;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;text-decoration:none;font-size:12px;font-weight:800;letter-spacing:.03em}
           .meta{margin-top:8px;color:var(--muted);font-size:13px}
-          @media (max-width:980px){.hero{grid-template-columns:1fr}.hero h2{font-size:24px}}
-        </style></head><body><div class="wrap">
+          .panel{margin-top:12px;background:linear-gradient(180deg,#101a35,#0d1530);border:1px solid rgba(156,176,216,.26);border-radius:18px;box-shadow:var(--shadow);padding:14px}
+          .panel h2{margin:0 0 10px;font-size:16px}
+          .logs{white-space:pre-wrap;background:rgba(9,13,27,.5);border:1px solid rgba(156,176,216,.26);color:#d7e7f5;border-radius:12px;padding:13px;font-family:Consolas,monospace;font-size:12px;min-height:340px;line-height:1.42}
+          @media (max-width:980px){.hero{grid-template-columns:1fr}.hero h1{font-size:24px}}
+        </style></head><body><div class="shell">
           <header class="topbar">
-            <nav class="menu">
-              <a href="{{ url_for('search_page') }}" class="active">Run Search</a>
-              <a href="{{ url_for('applied_jobs_page') }}">Applied Jobs</a>
-              <a href="{{ url_for('not_applied_jobs_page') }}">Not Applied Jobs</a>
-              <a href="{{ url_for('results_jobs_page') }}">Results</a>
-              <a href="{{ url_for('all_jobs_page') }}">All Jobs</a>
-              <a href="{{ url_for('settings_page') }}">Settings</a>
+            <nav class="nav">
+              <a href="{{ url_for('search_page') }}" class="active">Suche starten</a>
+              <a href="{{ url_for('applied_jobs_page') }}">Beworben</a>
+              <a href="{{ url_for('not_applied_jobs_page') }}">Nicht beworben</a>
+              <a href="{{ url_for('results_jobs_page') }}">Ergebnisse</a>
+              <a href="{{ url_for('all_jobs_page') }}">Alle Stellen</a>
+              <a href="{{ url_for('settings_page') }}">Einstellungen</a>
             </nav>
           </header>
           <section class="hero">
             <div>
-              <h2>Run Search</h2>
-              <p>Launch the pipeline and monitor logs in one focused workspace.</p>
-              <div class="meta">Started: {{ run_state.started_at or "-" }} | Finished: {{ run_state.finished_at or "-" }}</div>
-              <div class="actions"><a class="btn" href="/run">{{ "Already Running" if status == "Running" else "Run Job Search" }}</a></div>
+              <h1>Suche starten</h1>
+              <p>Führe den kompletten Lauf aus und verfolge den Fortschritt live im Logfenster.</p>
+              <div class="meta">Gestartet: {{ run_state.started_at or "-" }} | Beendet: {{ run_state.finished_at or "-" }}</div>
+              <div class="actions"><a class="btn" href="/run">{{ "Läuft bereits" if status == "Läuft" else "Jobsuche jetzt starten" }}</a></div>
             </div>
-            <span class="badge {{ 'run' if status == 'Running' else 'idle' }}">{{ status }}</span>
+            <span class="status {{ 'warn' if status == 'Läuft' else 'ok' }}">{{ status }}</span>
           </section>
           <section class="panel">
-            <h3>Logs</h3>
+            <h2>Live-Logs</h2>
             <div class="logs">{{ recent_logs }}</div>
           </section>
         </div></body></html>
@@ -1111,7 +1108,6 @@ def search_page():
         run_state=run_state,
         recent_logs=recent_logs,
     )
-
 
 @app.get("/jobs/applied")
 def applied_jobs_page():
@@ -1139,10 +1135,10 @@ def settings_page():
     return render_template_string(
         """
         <!doctype html>
-        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Settings</title>
+        <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Einstellungen</title>
         <style>
           :root{
-            --bg:#090d1b;--bg2:#0f1630;--card:#101a35;--line:#273456;--ink:#f2f6ff;--muted:#9fb0d4;
+            --bg:#090d1b;--bg2:#0f1630;--line:#273456;--ink:#f2f6ff;--muted:#9fb0d4;
             --primary:#55a0ff;--primary2:#6d6dff;--shadow:0 16px 38px rgba(5,8,20,.45);
           }
           body{
@@ -1152,61 +1148,42 @@ def settings_page():
               radial-gradient(900px 520px at -10% 20%, rgba(85,160,255,.18), transparent 55%),
               linear-gradient(180deg,var(--bg),var(--bg2));
           }
-          .wrap{max-width:980px;margin:0 auto;padding:18px 16px 34px}
-          .topbar{
-            position:sticky;top:0;z-index:40;background:rgba(9,13,27,.84);backdrop-filter:blur(9px);
-            border-bottom:1px solid rgba(159,176,212,.22);margin:-18px -16px 14px;padding:14px 16px 12px;
-          }
-          .menu{display:flex;gap:8px;flex-wrap:wrap}
-          .menu a{
-            padding:10px 14px;border-radius:11px;text-decoration:none;border:1px solid rgba(159,176,212,.28);
-            background:rgba(16,26,53,.86);color:var(--ink);font-weight:700;font-size:13px;letter-spacing:.02em;
-          }
-          .menu a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;border-color:transparent}
-          .hero{
-            background:linear-gradient(140deg,#132044,#0d1630);border:1px solid rgba(159,176,212,.28);
-            border-radius:22px;padding:18px;box-shadow:var(--shadow)
-          }
-          .hero h2{margin:0 0 6px;font-size:28px}
+          .shell{max-width:1000px;margin:0 auto;padding:18px 16px 34px}
+          .topbar{position:sticky;top:0;z-index:40;background:rgba(5,7,13,.86);backdrop-filter:blur(10px);border-bottom:1px solid rgba(156,176,216,.2);margin:-18px -16px 14px;padding:14px 16px 12px}
+          .nav{display:flex;gap:8px;flex-wrap:wrap}
+          .nav a{padding:10px 14px;border-radius:11px;border:1px solid rgba(156,176,216,.3);text-decoration:none;color:var(--ink);background:rgba(17,27,53,.86);font-weight:700;font-size:13px;letter-spacing:.02em}
+          .nav a.active{background:linear-gradient(135deg,var(--primary),var(--primary2));border-color:transparent;color:#fff}
+          .hero{background:linear-gradient(145deg,#15264d,#0f1733 64%);border:1px solid rgba(156,176,216,.28);border-radius:22px;padding:18px;box-shadow:var(--shadow)}
+          .hero h1{margin:0 0 6px;font-size:30px}
           .hero p{margin:0;color:var(--muted)}
-          .panel{
-            margin-top:12px;background:linear-gradient(180deg,#101a35,#0d1530);border:1px solid rgba(159,176,212,.26);
-            border-radius:18px;box-shadow:var(--shadow);padding:14px;
-          }
+          .panel{margin-top:12px;background:linear-gradient(180deg,#101a35,#0d1530);border:1px solid rgba(156,176,216,.26);border-radius:18px;box-shadow:var(--shadow);padding:14px}
           label{display:block;font-size:12px;color:#b8c7e9;margin-bottom:6px;font-weight:800;letter-spacing:.05em}
-          textarea{
-            width:100%;min-height:260px;background:rgba(9,13,27,.45);border:1px solid rgba(159,176,212,.36);
-            border-radius:12px;padding:12px;color:var(--ink);font:inherit;
-          }
+          textarea{width:100%;min-height:280px;background:rgba(9,13,27,.45);border:1px solid rgba(156,176,216,.36);border-radius:12px;padding:12px;color:var(--ink);font:inherit}
           .actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
-          .btn{
-            display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;
-            text-decoration:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;
-            font-weight:800;font-size:12px;letter-spacing:.03em;border:1px solid transparent;cursor:pointer;
-          }
-          .btn.secondary{background:rgba(16,26,53,.8);border-color:rgba(159,176,212,.35);color:#d9e6ff}
-        </style></head><body><div class="wrap">
+          .btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;border-radius:10px;text-decoration:none;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-weight:800;font-size:12px;letter-spacing:.03em;border:1px solid transparent;cursor:pointer}
+          .btn.secondary{background:rgba(16,26,53,.8);border-color:rgba(156,176,216,.35);color:#d9e6ff}
+        </style></head><body><div class="shell">
           <header class="topbar">
-            <nav class="menu">
-              <a href="{{ url_for('search_page') }}">Run Search</a>
-              <a href="{{ url_for('applied_jobs_page') }}">Applied Jobs</a>
-              <a href="{{ url_for('not_applied_jobs_page') }}">Not Applied Jobs</a>
-              <a href="{{ url_for('results_jobs_page') }}">Results</a>
-              <a href="{{ url_for('all_jobs_page') }}">All Jobs</a>
-              <a href="{{ url_for('settings_page') }}" class="active">Settings</a>
+            <nav class="nav">
+              <a href="{{ url_for('search_page') }}">Suche starten</a>
+              <a href="{{ url_for('applied_jobs_page') }}">Beworben</a>
+              <a href="{{ url_for('not_applied_jobs_page') }}">Nicht beworben</a>
+              <a href="{{ url_for('results_jobs_page') }}">Ergebnisse</a>
+              <a href="{{ url_for('all_jobs_page') }}">Alle Stellen</a>
+              <a href="{{ url_for('settings_page') }}" class="active">Einstellungen</a>
             </nav>
           </header>
           <section class="hero">
-            <h2>Settings</h2>
-            <p>Manage search terms and export summary from one control panel.</p>
+            <h1>Einstellungen</h1>
+            <p>Bearbeite Suchbegriffe und exportiere die Bewerbungsübersicht aus einem zentralen Bereich.</p>
           </section>
           <section class="panel">
             <form method="post" action="{{ url_for('save_settings_page') }}">
-              <label>SEARCH TERMS (ONE PER LINE)</label>
+              <label>SUCHBEGRIFFE (EIN BEGRIFF PRO ZEILE)</label>
               <textarea name="search_terms_text">{{ terms }}</textarea>
               <div class="actions">
-                <button class="btn" type="submit">Save Search Terms</button>
-                <a class="btn secondary" href="{{ url_for('download_applications_summary') }}">Download Application Summary</a>
+                <button class="btn" type="submit">Suchbegriffe speichern</button>
+                <a class="btn secondary" href="{{ url_for('download_applications_summary') }}">Bewerbungsübersicht herunterladen</a>
               </div>
             </form>
           </section>
@@ -1214,7 +1191,6 @@ def settings_page():
         """,
         terms=terms,
     )
-
 
 @app.post("/settings")
 def save_settings_page():
@@ -1316,8 +1292,8 @@ def logs():
         <body>
           <div class="top">
             <div><strong>Status:</strong> {{ run_state.status }}</div>
-            <div><strong>Started:</strong> {{ run_state.started_at or "â€”" }}</div>
-            <div><strong>Finished:</strong> {{ run_state.finished_at or "â€”" }}</div>
+            <div><strong>Started:</strong> {{ run_state.started_at or "-" }}</div>
+            <div><strong>Finished:</strong> {{ run_state.finished_at or "-" }}</div>
             <div><a href="/">Back to dashboard</a></div>
           </div>
           <pre>{{ content }}</pre>
@@ -1365,7 +1341,7 @@ def download_applications_summary():
     sheet.append(
         [
             "Name der Firma",
-            "StraÃŸe",
+            "Straße",
             "Postleitzahl",
             "Ort",
             "Als was hab ich mich beworben?",
@@ -1498,4 +1474,5 @@ def download_cover_letter(job_ai):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+
 
