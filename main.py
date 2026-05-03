@@ -315,10 +315,23 @@ def load_existing_jobs_from_supabase(client):
     if client is None:
         return {}
 
-    response = client.table(SUPABASE_TABLE).select(
-        "refnr,job_id,date,keyword_score,ai_match_score,title,employer,city,reason,job_url,has_cover_letter,cover_letter_text,application_status,application_method,application_result,applied_at,note,created_at,updated_at,cover_letter_path,job_description_path,job_description_text,employer_street,employer_postal_code,employer_city"
-    ).execute()
-    rows = response.data or []
+    rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        response = (
+            client.table(SUPABASE_TABLE)
+            .select(
+                "refnr,job_id,date,keyword_score,ai_match_score,title,employer,city,reason,job_url,has_cover_letter,cover_letter_text,application_status,application_method,application_result,applied_at,note,created_at,updated_at,cover_letter_path,job_description_path,job_description_text,employer_street,employer_postal_code,employer_city"
+            )
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = response.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
 
     existing = {}
     for row in rows:
