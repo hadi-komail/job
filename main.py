@@ -868,12 +868,16 @@ def main():
     first_seen_at = {}
     discovery_base_time = dt.datetime.now(dt.timezone.utc)
     discovery_counter = 0
+    search_terms_total = len(search_terms)
+    search_terms_failed = 0
+    jobs_without_refnr = 0
 
     for term in search_terms:
         try:
             jobs = search_jobs(term)
         except requests.RequestException as exc:
             print(f"Search failed for '{term}': {exc}")
+            search_terms_failed += 1
             continue
         for job in jobs:
             refnr = job.get("refnr")
@@ -883,6 +887,8 @@ def main():
                 if refnr not in first_seen_at and not existing_row.get("created_at"):
                     first_seen_at[refnr] = discovery_timestamp(discovery_base_time, discovery_counter)
                     discovery_counter += 1
+            else:
+                jobs_without_refnr += 1
         all_jobs.extend(jobs)
 
     unique_jobs = {}
@@ -895,6 +901,8 @@ def main():
     scored_jobs = []
     skipped_already_scored = 0
     skipped_existing_letters = 0
+    details_api_calls = 0
+    details_failures = 0
 
     for job in jobs:
         refnr = job.get("refnr")
@@ -973,9 +981,11 @@ def main():
         details = {}
         if not description:
             try:
+                details_api_calls += 1
                 details = get_job_details(refnr)
             except requests.RequestException as exc:
                 print(f"Details failed for '{refnr}': {exc}")
+                details_failures += 1
                 continue
             description = details.get("stellenangebotsBeschreibung")
 
@@ -991,9 +1001,18 @@ def main():
     number = 0
     generated_count = 0
     ai_available = True
+    local_below_min_score = 0
+    sent_to_ai_scoring = 0
+    reused_ai_score = 0
+    ai_below_threshold = 0
+    skipped_cover_letter_limit = 0
+    skipped_ai_unavailable = 0
+    sent_to_cover_letter_generation = 0
+    cover_letter_generation_errors = 0
 
     for posted, score, job, description, refnr, details in scored_jobs:
         if score < MIN_SCORE_TO_PRINT:
+            local_below_min_score += 1
             continue
 
         number += 1
@@ -1086,6 +1105,7 @@ def main():
         print(description[:5000] if description else "No description")
 
         if generated_count >= MAX_COVER_LETTERS:
+            skipped_cover_letter_limit += 1
             print("Reached cover letter limit for this run.")
             print_job_summary_table(
                 job_id or "—",
@@ -1098,6 +1118,7 @@ def main():
             continue
 
         if not ai_available:
+            skipped_ai_unavailable += 1
             print("AI cover letter generation is unavailable for this run.")
             print_job_summary_table(
                 job_id or "—",
@@ -1111,6 +1132,7 @@ def main():
 
         try:
             if existing_ai_match_score is not None:
+                reused_ai_score += 1
                 ai_match_score = existing_ai_match_score
                 ai_match_summary = existing_supabase_job.get("reason") or (
                     f"MATCH_SCORE: {ai_match_score:g}/10\n"
@@ -1120,6 +1142,7 @@ def main():
                 print(ai_match_summary)
                 current_ai_match_score = ai_match_score
             else:
+                sent_to_ai_scoring += 1
                 print("Assessing profile match...")
                 ai_match_score, ai_match_summary = assess_job_match(
                     client,
@@ -1189,6 +1212,7 @@ def main():
                 current_ai_match_score = ai_match_score
 
             if ai_match_score < MIN_AI_MATCH_SCORE:
+                ai_below_threshold += 1
                 print(
                     f"Skipping cover letter because AI match score is "
                     f"{ai_match_score}/10, below {MIN_AI_MATCH_SCORE}/10."
@@ -1204,6 +1228,7 @@ def main():
                 continue
 
             print("Generating cover letter...")
+            sent_to_cover_letter_generation += 1
             cover_letter = generate_cover_letter(client, cv_text, job, description)
         except RateLimitError as exc:
             print(f"OpenAI quota error: {exc}")
@@ -1219,6 +1244,7 @@ def main():
             )
             continue
         except Exception as exc:
+            cover_letter_generation_errors += 1
             print(f"Cover letter generation failed for '{refnr}': {exc}")
             print_job_summary_table(
                 job_id or "—",
@@ -1309,11 +1335,27 @@ def main():
         )
 
     print("-----------------------------------------------------------------------------")
+    print("Run summary:")
+    print(f"Search terms total: {search_terms_total}")
+    print(f"Search terms failed: {search_terms_failed}")
     print(f"Raw search hits collected: {len(all_jobs)}")
+    print(f"Jobs without refnr: {jobs_without_refnr}")
     print(f"Unique jobs after deduplication: {len(jobs)}")
-    print(f"Jobs passing local score threshold: {number}")
-    print(f"Jobs skipped because already detail-called/scored: {skipped_already_scored}")
-    print(f"Jobs skipped because a cover letter already exists: {skipped_existing_letters}")
+    print(f"Newly discovered jobs this run: {len(first_seen_at)}")
+    print(f"Jobs skipped because already found + has cover letter: {skipped_existing_letters}")
+    print(f"Jobs skipped because already found/scored and not eligible: {skipped_already_scored}")
+    print(f"Jobs sent to local scoring/detail phase: {len(scored_jobs)}")
+    print(f"Detail API calls: {details_api_calls}")
+    print(f"Detail API failures: {details_failures}")
+    print(f"Jobs below local minimum score ({MIN_SCORE_TO_PRINT}): {local_below_min_score}")
+    print(f"Jobs passing local minimum score ({MIN_SCORE_TO_PRINT}+): {number}")
+    print(f"Jobs sent to AI scoring: {sent_to_ai_scoring}")
+    print(f"Jobs reused existing AI score: {reused_ai_score}")
+    print(f"Jobs below AI minimum score ({MIN_AI_MATCH_SCORE}): {ai_below_threshold}")
+    print(f"Jobs sent to AI cover-letter generation: {sent_to_cover_letter_generation}")
+    print(f"Jobs skipped due max cover-letter limit ({MAX_COVER_LETTERS}): {skipped_cover_letter_limit}")
+    print(f"Jobs skipped because AI disabled/unavailable: {skipped_ai_unavailable}")
+    print(f"Cover-letter generation errors: {cover_letter_generation_errors}")
     print(f"New cover letters generated in this run: {generated_count}")
 
 
