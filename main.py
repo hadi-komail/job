@@ -49,7 +49,7 @@ REQUEST_RETRIES = 1
 REQUEST_RETRY_DELAY_SECONDS = 0
 SEARCH_PAGE_SIZE = 20
 SEARCH_MAX_PAGES = 2
-MIN_SCORE_TO_PRINT = 2
+MIN_SCORE_TO_PRINT = 1
 MAX_COVER_LETTERS = 20
 MIN_AI_MATCH_SCORE = 7
 CV_PATH = Path("about-ai.txt")
@@ -193,6 +193,7 @@ def score_job(job, description):
         "Teilhabe",
         "Arbeitsmarkt",
         "Integration begleiten",
+        "Rezeptionist"
 
         # Research and social science roles aligned with your CV
         "empirische Sozialforschung",
@@ -526,6 +527,7 @@ Job information:
 
 Instructions:
 - Score the match from 0 to 10.
+- Score the match based on the possibility of getting invitation to interview.
 - Base the score only on evidence in the CV and the job description.
 - Be strict and realistic.
 - If the job is in a very different field from the candidate profile, score it low.
